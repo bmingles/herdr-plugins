@@ -39,6 +39,40 @@ command = ["./bin/sync", "--reason", "event"]
 on = "workspace.focused"
 command = ["./bin/sync", "--reason", "event"]
 
+# Non-workspace events, added after a user report: changing directory in a tab moves
+# the Space (Herdr derives a Space's cwd from its active pane -- `cwd` appears only in
+# workspace.create, so there is no stored root), but no `workspace.*` event fires.
+#
+# `pane.updated` is what actually carries the new cwd, and it is NOT hookable: the
+# manifest accepts it and it never fires. Of 27 subscription types only 10 reach plugin
+# hooks. These five are the hookable ones that fire for *plain* panes, so a `cd` is
+# picked up on the next navigation. Measured, not assumed -- see
+# docs/herdr-vscode-sync-facts.md probe 18.
+#
+# `pane.agent_status_changed` is deliberately NOT hooked: it fires ~0.85/s and only for
+# panes with a detected agent, so it costs ~8% of a core per agent and does nothing for
+# the plain-shell case this is meant to fix.
+
+[[events]]
+on = "pane.focused"
+command = ["./bin/sync", "--reason", "event"]
+
+[[events]]
+on = "tab.focused"
+command = ["./bin/sync", "--reason", "event"]
+
+[[events]]
+on = "pane.created"
+command = ["./bin/sync", "--reason", "event"]
+
+[[events]]
+on = "tab.created"
+command = ["./bin/sync", "--reason", "event"]
+
+[[events]]
+on = "tab.closed"
+command = ["./bin/sync", "--reason", "event"]
+
 [[actions]]
 id = "sync"
 title = "Sync VS Code workspace"

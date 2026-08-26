@@ -127,9 +127,16 @@ def reduce_snapshot(snap, context=None):
     `spaces` is in sidebar order -- array order is authoritative, verified against a
     reorder; `number` is a redundant 1-based confirmation of it.
 
-    `context` is `HERDR_PLUGIN_CONTEXT_JSON`. Its `workspace_cwd` is the *stable* root
-    for the Space named in the hook (pane `cwd` drifts when the user `cd`s), so it wins
-    for that one Space; every other Space falls back to the pane join.
+    `context` is `HERDR_PLUGIN_CONTEXT_JSON`. Its `workspace_cwd` wins for the Space
+    named in the hook; every other Space falls back to the pane join.
+
+    It is **not** a stable root -- an earlier version of this docstring claimed it was.
+    Measured: after `cd docs` in a Space's active pane, both `panes[].cwd` and
+    `context.workspace_cwd` reported the new subdirectory. Herdr has no stored Space
+    root to fall back on: `cwd` appears only in `workspace.create` across the whole
+    socket API, so a Space's directory is *derived* live from its active pane and `cd`
+    is the only mechanism that changes it after creation. Using context here is simply
+    a direct read of that same value for the subject Space, not a stabler one.
     """
     context = context or {}
     workspaces = snap.get("workspaces") or []

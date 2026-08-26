@@ -126,6 +126,35 @@ which is free. It also keeps `${workspaceFolder}` stable.
 
 `--doctor` warns when `mode` is `"active"` and `pinnedFolders` is empty, then proceeds.
 
+## Changing directory
+
+A Space's directory is **derived from its active pane**, not stored — `cwd` appears only
+in `workspace.create` across the entire socket API, and there is no `workspace.set_cwd`.
+So `cd` is the only way a Space moves after it is created, and the folder in VS Code
+follows it.
+
+The catch: **`cd` fires no hookable event.** `pane.updated` is the event that carries the
+new cwd, and it is delivered over the socket but never to plugin hooks — the manifest
+accepts it and it silently never fires. Of Herdr 0.8.0's 27 subscription types, only 10
+reach plugin hooks at all.
+
+So the plugin hooks the five that do fire for ordinary shell panes — `pane.focused`,
+`tab.focused`, `pane.created`, `tab.created`, `tab.closed`. After a `cd`, the folder
+updates on your **next navigation**: switching pane or tab, opening a tab, splitting.
+In normal use that is immediate enough that you rarely notice.
+
+What is still not covered: `cd` and then staying in that pane, touching nothing else.
+VS Code stays on the old directory until something happens. Force it with:
+
+```sh
+herdr plugin action invoke sync --plugin vscode-workspace-sync
+```
+
+`pane.agent_status_changed` fires ~0.85/s and would act as a near-realtime poll, but it
+is deliberately **not** hooked: it only fires for panes with a detected agent — nothing at
+all for a plain shell, which is the case this is meant to fix — and at ~90 ms per no-op
+run it would cost roughly 8% of a core per active agent.
+
 ## Manage folders in Herdr, not the VS Code UI
 
 When the **plugin** writes the file, VS Code adopts the change and leaves the file alone —
@@ -148,8 +177,10 @@ ways by `herdr-plugin.toml`:
 
 - `[[startup]]` — once when a Herdr server starts or takes over a live handoff, so the
   workspace file matches the restored session.
-- `[[events]]` — one hook each for `workspace.created`, `closed`, `renamed`, `moved`,
-  `reordered`, `updated` and `focused`.
+- `[[events]]` — twelve hooks: the seven `workspace.*` events (`created`, `closed`,
+  `renamed`, `moved`, `reordered`, `updated`, `focused`) plus `pane.focused`,
+  `tab.focused`, `pane.created`, `tab.created` and `tab.closed`. The latter five exist so
+  a `cd` gets picked up — see [Changing directory](#changing-directory).
 - `[[actions]]` — `sync`, for a manual resync. (Diagnostics are the `--doctor`
   *flag*, run directly — see Diagnostics.)
 
@@ -326,9 +357,12 @@ A worktree-backed Space adds:
 ```
 
 `workspace_id` is the **subject of the event**, not the focused Space — only on
-`workspace.focused` are the two the same. `workspace_cwd` is the *stable* Space root (pane
-`cwd` drifts when you `cd`), so the plugin prefers it for the Space named in a hook and
-falls back to the pane join for all the others. It is **absent on `workspace.closed`**,
+`workspace.focused` are the two the same. `workspace_cwd` is the Space's *current* root,
+which the plugin uses for the Space named in a hook, falling back to the pane join for all
+the others. It is **not** a stable root: after a `cd` it reports the new subdirectory, the
+same as `panes[].cwd`. Herdr stores no Space root at all — `cwd` appears only in
+`workspace.create` across the whole socket API, so a Space's directory is derived live
+from its active pane. It is **absent on `workspace.closed`**,
 because the Space is gone. Fields are omitted, not nulled, when unavailable.
 
 ### `HERDR_PLUGIN_EVENT_JSON`

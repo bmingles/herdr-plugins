@@ -1011,6 +1011,86 @@ and an unpinned `active` mode (churn on **every** Space switch).
 
 ---
 
+## 18. Which events actually reach plugin hooks (follow-up, 2026-08-26)
+
+Prompted by a user report: changing directory in a tab moves the Space, but the VS Code
+folder did not follow. Adding a tab did work.
+
+### A Space's cwd is derived, not stored
+
+`cwd` appears in exactly **one** place in the whole request schema — `WorkspaceCreateParams`.
+There is no `workspace.set_cwd` method and no CLI equivalent:
+
+```
+$ herdr workspace --help
+Commands: list, create, get, focus, rename, report-metadata, close
+```
+
+So a Space's directory is computed live from its active pane, and `cd` is the only
+mechanism that changes it after creation. Measured — `cd docs` in a Space's active pane:
+
+```
+   snapshot pane cwd   = /Users/bingles/code/tools/herdr-plugins/docs
+   context workspace_cwd = /Users/bingles/code/tools/herdr-plugins/docs
+```
+
+**This corrects probe 9**, which called `workspace_cwd` "the stable Space root … better
+than `panes[].cwd`, which drifts". Both follow the `cd`; there is no stable root to have.
+That claim was inferred, never tested.
+
+### Only 10 of 27 subscription types invoke plugin hooks
+
+A probe declaring **all 27** linked cleanly — `herdr plugin link` accepted every name —
+then the session was exercised (cd, split, focus pane, new tab, focus tab, rename, focus
+workspace, run a command, close tab, close workspace):
+
+| Fired | Count in ~75 s |
+| --- | --- |
+| `pane.agent_status_changed` | 64 (**0.85/s**) |
+| `pane.created` | 3 |
+| `tab.created`, `tab.focused`, `pane.focused`, `workspace.focused` | 2 each |
+| `workspace.created`, `workspace.renamed`, `tab.closed`, `workspace.closed` | 1 each |
+
+**Never fired, despite being accepted by the manifest:** `pane.updated`, `pane.closed`,
+`pane.moved`, `pane.exited`, `pane.agent_detected`, `pane.output_matched`,
+`pane.scroll_changed`, `workspace.updated`, `workspace.metadata_updated`,
+`workspace.moved`, `workspace.reordered`, `tab.renamed`, `tab.moved`, `layout.updated`,
+`worktree.created`, `worktree.opened`, `worktree.removed`.
+
+**Manifest validation is not a signal.** All 27 validate; 17 are inert. A control run in
+the same probe had `workspace.created` fire while `pane.updated` did not, so the probe was
+demonstrably working.
+
+`pane.updated` is the painful one: it is delivered over `events.subscribe` **with the new
+cwd**, and it is exactly what a cwd-tracking plugin wants — but it never reaches a hook.
+
+```
+1.04 cwd=/Users/bingles/code/tools/herdr-plugins        (initial)
+3.20 cwd=/Users/bingles/code/tools/herdr-plugins/docs   <- cd docs
+8.19 cwd=/private/tmp                                   <- cd /tmp
+```
+
+### `pane.agent_status_changed` fires only for agent panes
+
+The obvious poll candidate, at 0.85/s. But a plain-shell Space was created and `cd` plus a
+command run in it:
+
+```
+  total new events: 4
+  attributed to that pane: 0   -- a plain shell fires nothing on cd or command output
+```
+
+All 64 came from panes with a detected agent. It does nothing for the plain-shell case,
+and a no-op sync measures **~90 ms**, so 0.85/s is roughly **8% of a core per active
+agent**. Not hooked.
+
+### Consequence for the plugin
+
+Five hookable events that *do* fire for plain panes were added — `pane.focused`,
+`tab.focused`, `pane.created`, `tab.created`, `tab.closed` — so a `cd` is picked up on the
+next navigation. No hookable event exists for `cd` followed by staying put; that would
+need the rejected long-lived `events.subscribe` daemon.
+
 ## Probing limitations worth recording
 
 - **Sidebar drag was driven through the socket API** (`workspace.move` /
