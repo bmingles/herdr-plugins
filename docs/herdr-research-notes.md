@@ -4,13 +4,16 @@ Findings from investigating how to surface devcontainer agent status in the host
 Herdr instance. Much of this is not in the bundled `herdr` skill file, and some was
 established by experiment rather than documentation.
 
-**Practical outcome:** the original goal needs no plugin — see
-[devcontainer-agent-status.md](./devcontainer-agent-status.md). These notes exist so
+**Practical outcome:** the original goal needs no plugin — see the
+`herdr-devcontainer-agent-running` skill in `.claude/skills/`. These notes exist so
 the reasoning and the dead ends don't have to be rediscovered.
 
-The plugin system and socket API sections are distilled for agent use as the
-`herdr-plugin-authoring` skill in `.claude/skills/`; the detection and dead-end
-sections as `herdr-devcontainer-agent-running`. Keep them in sync.
+Distilled for agent use as two skills in `.claude/skills/`: the plugin system and
+socket API sections as `herdr-plugin-authoring`, the detection and dead-end sections
+as `herdr-devcontainer-agent-running`. The skills are the operational form; these
+notes keep what they drop — raw evidence, the test bed, and the open questions — so a
+claim that stops holding can be re-tested rather than just re-read. Keep the
+overlapping parts in sync.
 
 Verified against Herdr **0.8.0 (protocol 19)** on macOS with Docker Desktop, unless
 noted. Latest at time of writing was 0.8.2 (protocol 20).
