@@ -1,0 +1,17 @@
+```jsonc
+{
+  "folders": [
+    { "path": "/Users/jdoe/code/tools/herdr-plugins" },
+    { "path": "/Users/jdoe/code/tools/devc-tools" },
+  ],
+  "settings": {
+    "workbench.colorCustomizations": {
+      "statusBar.background": "#1f8d13",
+      "statusBar.foreground": "#000000",
+      "titleBar.activeBackground": "#1f8d13",
+      "titleBar.activeForeground": "#000000",
+      "titleBar.inactiveBackground": "#1f8d13",
+    },
+  },
+}
+```
