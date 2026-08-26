@@ -24,7 +24,7 @@ Requires Herdr **0.8.0** or newer. macOS and Linux; Windows is untested and not 
 ## Install
 
 ```sh
-herdr plugin install <owner>/herdr-plugins/vscode-workspace-sync
+herdr plugin install bmingles/herdr-plugins/vscode-workspace-sync
 ```
 
 Or, to develop against a working tree:

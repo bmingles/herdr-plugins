@@ -12,7 +12,7 @@ coding agents.
 Install a plugin straight from this repo:
 
 ```sh
-herdr plugin install <owner>/herdr-plugins/vscode-workspace-sync
+herdr plugin install bmingles/herdr-plugins/vscode-workspace-sync
 ```
 
 Or link a working tree while developing:
