@@ -1,0 +1,13 @@
+{
+  // Machine-specific devc overlay, managed by `devc config`.
+  // Also supports "additionalFeatures" and "remoteEnv" — see devc's README.
+  "mounts": [
+    // >>> devc:source (managed - do not edit)
+    // <<< devc:source
+
+    // >>> devc:skills (managed - do not edit)
+    "type=bind,source=${localEnv:HOME}/.agents/skills/skill-authoring,target=/home/vscode/.claude/skills/skill-authoring",
+    "type=bind,source=${localEnv:HOME}/.agents/skills/skill-creator,target=/home/vscode/.claude/skills/skill-creator"
+    // <<< devc:skills
+  ]
+}
