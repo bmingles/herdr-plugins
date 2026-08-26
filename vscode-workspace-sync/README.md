@@ -34,18 +34,44 @@ herdr plugin link ./vscode-workspace-sync
 herdr plugin list
 ```
 
-Then write the config file and run the sync once by hand — startup hooks run when a
-Herdr **server** starts, not on `plugin link`:
+### Write the config
+
+**The plugin does nothing until `config.json` exists** — it has no default target, by
+design, so it can never guess at a file and rewrite the wrong one. `config-dir` prints a
+bare path and works before the plugin is installed:
 
 ```sh
-herdr plugin config-dir vscode-workspace-sync    # prints the config directory
-# copy config.example.json there as config.json and edit `workspaceFile`
+CFG="$(herdr plugin config-dir vscode-workspace-sync)"
+mkdir -p "$CFG"
+cat > "$CFG/config.json" <<'JSON'
+{
+  "workspaceFile": "~/path/to/your.code-workspace"
+}
+JSON
+```
+
+Point `workspaceFile` at a `.code-workspace` file **that already exists** — the plugin
+will not create one. `config.example.json` in this directory documents the other two keys.
+
+### First run
+
+Check what it would do before it writes anything:
+
+```sh
+./bin/sync --doctor          # from this directory; prints Spaces, paths, computed folders
+```
+
+Then sync once by hand — startup hooks run when a Herdr **server** starts, not on
+`plugin link`:
+
+```sh
 herdr plugin action invoke sync --plugin vscode-workspace-sync
 herdr plugin log list --plugin vscode-workspace-sync --limit 5
 ```
 
 `herdr plugin log list` is the **only** place hook output is visible. Check it after any
-trigger rather than guessing.
+trigger rather than guessing — and see [Diagnostics](#diagnostics) when nothing seems to
+happen.
 
 ## Configuration
 
