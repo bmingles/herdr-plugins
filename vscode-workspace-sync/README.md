@@ -40,7 +40,7 @@ Herdr **server** starts, not on `plugin link`:
 ```sh
 herdr plugin config-dir vscode-workspace-sync    # prints the config directory
 # copy config.example.json there as config.json and edit `workspaceFile`
-herdr plugin action invoke vscode-workspace-sync.sync
+herdr plugin action invoke sync --plugin vscode-workspace-sync
 herdr plugin log list --plugin vscode-workspace-sync --limit 5
 ```
 

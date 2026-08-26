@@ -880,10 +880,11 @@ translation; Windows support; syncing Herdr tabs to VS Code editor groups.
 - [ ] **Install path:** after publishing, `herdr plugin install <owner>/<repo>` succeeds on
       a machine that has never had Deno or Node — proving the no-build design end to end.
       This was never exercised during discovery
-- [ ] `herdr plugin action invoke vscode-workspace-sync.doctor` then
-      `herdr plugin log list --plugin vscode-workspace-sync --limit 5` shows the resolved
-      config and computed folders, exit 0
-- [ ] `herdr plugin action invoke vscode-workspace-sync.sync` rewrites the file and the
+- [ ] `cd <plugin_root> && ./bin/sync --doctor` prints the resolved config, the Space
+      list with paths, and the computed folders, exit 0. (There is deliberately no
+      `doctor` plugin action — action stdout only reaches `herdr plugin log list`,
+      JSON-escaped.)
+- [ ] `herdr plugin action invoke sync --plugin vscode-workspace-sync` rewrites the file and the
       VS Code explorer shows one root per Space, in sidebar order
 - [ ] `herdr workspace create --cwd ~/some/repo --label demo --no-focus` adds that root
       to the explorer within a second, with no window reload
