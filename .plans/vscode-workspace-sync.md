@@ -3,7 +3,11 @@
 A Herdr plugin that keeps the `folders` array of a VS Code multi-root
 `.code-workspace` file in sync with Herdr Spaces (workspaces).
 
-> **Prerequisite: DONE.** [`vscode-workspace-sync-discovery.md`](vscode-workspace-sync-discovery.md)
+**Python 3.9+, standard library only, no build step and no dependencies** — so
+`herdr plugin install <owner>/<repo>` is the whole install story for a shared plugin. See
+[Runtime](#runtime-python-39-stdlib-only-no-build).
+
+> **Prerequisite: DONE.** [`vscode-workspace-sync-discovery.md`](archived/vscode-workspace-sync-discovery.md)
 > ran on 2026-08-26 against Herdr 0.8.0 / protocol 19 and VS Code 1.134.0. All three
 > previously-guessed decisions are now settled: Space state is read as corrected under
 > "Reading Herdr state", all seven hooked events fire, and mode `active` **is** viable
@@ -63,14 +67,17 @@ changed:
 8. **The server's `PATH` was the opposite of predicted.** The plan asserts a minimal
    server `PATH`; the observed server had inherited a full interactive `PATH` (from the
    VS Code integrated terminal that launched it) and `deno`, `node`, and `git` all
-   resolved. The compiled-binary design is still correct, but its justification changes
-   from *"the server's `PATH` is minimal"* to **"the server's `PATH` is whatever launched
-   it, therefore unknowable"**. The `env -i` offline test remains exactly right.
+   resolved. `PATH`-independence is still required, but its justification changes from
+   *"the server's `PATH` is minimal"* to **"the server's `PATH` is whatever launched it,
+   therefore unknowable"** — and that is satisfied by naming the interpreter by absolute
+   path, which is what allowed the design to drop the compile step entirely (see
+   Runtime). The `env -i` offline test remains exactly right.
 
 9. **Relative-path spawn confirmed.** `command = ["./bin/hello"]` ran with cwd set to the
-   plugin root, for both actions and event hooks. `$HERDR_BIN_PATH` is provided
-   (`/Users/bingles/.local/bin/herdr`). Host Deno is **2.9.5** at
-   `/Users/bingles/.deno/bin/deno` — same version as the devcontainer.
+   plugin root, for both actions and event hooks — which is what lets the manifest invoke
+   `./bin/sync`. `$HERDR_BIN_PATH` is provided (`/Users/bingles/.local/bin/herdr`).
+   (Discovery also recorded Deno 2.9.5 on the host, relevant only to the since-rejected
+   `deno compile` design; the plugin no longer needs any toolchain.)
 
 10. **Startup hooks: `HERDR_PLUGIN_EVENT` is the literal `startup`, and
     `HERDR_PLUGIN_EVENT_JSON` is unset.** Code that unconditionally parses the event JSON
@@ -135,68 +142,87 @@ Two modes, both implemented; `mirror` is the default:
   VS Code window is discoverable from the process environment. The target workspace
   file is therefore **configuration**, not detection (see Rejected alternatives).
 - The implementing agent will most likely be inside this devcontainer, where `herdr`
-  does not exist and cannot be installed, but Deno **2.9.5** is on `PATH` at
-  `/usr/local/bin/deno`. Everything in **Validation → Offline** must pass there,
-  compilation included. Everything in **Validation → Host** requires a macOS/Linux host
-  with Herdr and VS Code and is run by the user.
-- The compiled binary is built for the machine that builds it. One compiled in this
-  devcontainer (linux/arm64) runs the offline validation here and is **not** the artifact
-  the macOS host will use — the host rebuilds via `[[build]]` on install, or
-  `deno task build` when developing locally.
+  does not exist and cannot be installed, but `/usr/bin/python3` is **3.12.3**.
+  Everything in **Validation → Offline** must pass there. Everything in
+  **Validation → Host** requires a macOS/Linux host with Herdr and VS Code and is run by
+  the user.
+- **There is no build step and no compiled artifact.** The plugin is Python source,
+  stdlib only, run in place. What the devcontainer validates is byte-for-byte what the
+  host runs.
+- **Target Python 3.9.** That is what stock macOS ships (`/usr/bin/python3` measured at
+  **3.9.6** on the host); the devcontainer's 3.12.3 is more permissive and must not be
+  allowed to mask a 3.10+ feature. Concretely: no `match` statements, no PEP 604
+  `X | Y` annotations evaluated at runtime, and **no `tomllib`** (3.11+) — which is one
+  reason config stays JSON.
 
 ## Design
 
-### Runtime and build
+### Runtime: Python 3.9+, stdlib only, no build
 
-TypeScript on Deno, compiled to a standalone executable with `deno compile`. The
-manifest invokes `./bin/herdr-vscode-sync`, a plugin-root-relative path, which resolves
-because Herdr runs plugin commands with the plugin root as their cwd.
+**Python 3, standard library only, run in place. No build step, no compiled artifact, no
+third-party packages, no lockfile.** This is a deliberate choice for a *shared* plugin:
+`herdr plugin install <owner>/<repo>` fetches and links, and the plugin works. There is no
+`[[build]]` block, no release attachments, no per-platform artifacts, and nothing for an
+installing user to have on their machine beyond a Python 3 that macOS and every mainstream
+Linux already ship.
 
-This is what removes the interpreter-on-`PATH` problem. Plugin commands are spawned by
-the Herdr **server**, and **the server's `PATH` is whatever launched it — therefore
-unknowable.** Discovery measured a server started from a VS Code integrated terminal: it
-had inherited a full interactive `PATH` and `deno`, `node`, and `git` all resolved. A
-server started from launchd, systemd, a login item, or a bare `herdr` in a non-login shell
-carries something else entirely, quite possibly excluding a Homebrew, nvm, mise, or asdf
-toolchain. `["node", …]` — or `["deno", "run", …]`, whose default install location
-`~/.deno/bin` is even less likely to be present — would fail to spawn on those hosts,
-visible only in `herdr plugin log list`. A compiled binary needs nothing on `PATH` but
-itself, so it is correct on all of them.
+Everything the plugin needs is stdlib: `json`, `re`, `subprocess`, `os`, `tempfile`,
+`shutil`, `fcntl`, `errno`, `argparse`. Verified importable on stock macOS
+`/usr/bin/python3` (3.9.6).
 
-Deno is therefore a **build-time** requirement only:
+#### The `PATH` problem, and why an absolute interpreter path solves it
 
-```toml
-[[build]]
-command = ["deno", "task", "build"]
+Plugin commands are spawned by the Herdr **server**, and **the server's `PATH` is whatever
+launched it — therefore unknowable.** Discovery measured a server started from a VS Code
+integrated terminal: it had inherited a full interactive `PATH` with `deno`, `node`, and
+`git` all resolvable. A server started from launchd, systemd, or a login item carries
+something else entirely. So `command = ["python3", …]` is not safe, and neither is a
+`#!/usr/bin/env python3` shebang — `env` resolves through `PATH` too.
+
+The fix is to name the interpreter by **absolute path**, which macOS guarantees at
+`/usr/bin/python3`. A tiny POSIX-sh shim does the selection:
+
+```sh
+#!/bin/sh
+# bin/sync — locate a Python 3 without trusting PATH, then exec the real entrypoint.
+for py in /usr/bin/python3 /opt/homebrew/bin/python3 /usr/local/bin/python3; do
+    [ -x "$py" ] && exec "$py" "$(dirname "$0")/../src/main.py" "$@"
+done
+py=$(command -v python3 2>/dev/null) && exec "$py" "$(dirname "$0")/../src/main.py" "$@"
+echo "herdr-vscode-sync: no python3 found. Install Xcode Command Line Tools" >&2
+echo "  (xcode-select --install) or Homebrew Python (brew install python)." >&2
+exit 127
 ```
 
-with `deno.json` defining:
+The manifest then invokes `["./bin/sync", …]`. Discovery confirmed plugin-root-relative
+commands spawn with the plugin root as cwd, for both actions and event hooks, so this
+resolves. `$(dirname "$0")` is used rather than relying on cwd, so the shim also works when
+invoked by absolute path.
 
-```jsonc
-"tasks": {
-  "build": "deno compile --allow-read --allow-write --allow-env --allow-run --output bin/herdr-vscode-sync src/main.ts",
-  "test":  "deno test --allow-read --allow-write --allow-env --allow-run",
-  "check": "deno check src/ test/ && deno lint && deno fmt --check"
-}
-```
+This is **not** the "POSIX-sh entrypoint that locates an interpreter" listed under Rejected
+alternatives in earlier drafts. That objection was about shelling out to find a toolchain
+that may not exist anywhere on the machine. Here the candidate list is three fixed paths
+and the interpreter is preinstalled — the shim removes a `PATH` dependency rather than
+adding one. Both measured environments are covered: the host's `/usr/bin/python3` (3.9.6)
+and the devcontainer's `/usr/bin/python3` (3.12.3). Note the devcontainer's *`PATH`*
+python3 is `/usr/local/python/current/bin/python3`, which the list does not name and does
+not need to.
 
-Permissions are baked in at compile time and cannot be scoped tighter than this: the
-paths the plugin reads and writes, and the Herdr binary it executes, all arrive from
-config and environment at runtime, so there is no compile-time path list to pin them to.
-The README states this plainly rather than leaving a broad grant unexplained.
+#### Development loop
 
-`bin/` is gitignored — the artifact is ~80 MB and platform-specific. `herdr plugin
-install` runs `[[build]]` on the target machine, so an installed plugin compiles
-natively and no cross-compilation or committed binary is involved. **`herdr plugin link`
-does not run build commands**, so local development runs `deno task build` by hand after
-every source change; a forgotten build shows up as a spawn error in the plugin log.
+Edit and re-invoke — there is nothing to rebuild, which also means a user can patch an
+installed plugin in place to test a fix. `herdr plugin link ./vscode-workspace-sync` picks
+up source changes on the next hook invocation.
 
-Minimum Deno 2.x. macOS binaries are ad-hoc signed by `deno compile` and are not
-quarantined when built locally.
+**`bin/sync` must be committed executable** (`chmod +x`; `git update-index --chmod=+x` if
+the mode is wrong), or every hook fails with a spawn error visible only in `herdr plugin
+log list`. The `.py` files do **not** need the executable bit — they are passed to the
+interpreter as arguments, never exec'd directly.
 
 ### Architecture
 
-One entrypoint, `src/main.ts`, invoked three ways by the manifest:
+One entrypoint, `src/main.py` (reached via the `bin/sync` shim), invoked three ways
+by the manifest:
 
 1. `[[startup]]` — once when the Herdr server starts or takes over a live handoff, so
    the workspace file matches the restored session. On this invocation
@@ -236,8 +262,11 @@ names with no validation error.
 badge tokens (`workspace.report_metadata` takes a ≤16-key string map), so it has no path,
 label, or order data to sync.
 
-`workspace.focused` fires on every Space switch and spawns the binary each time
-(~40 ms, exits without writing). That is the accepted cost of a static manifest.
+`workspace.focused` fires on every Space switch and spawns the interpreter each time,
+which exits without writing. Python start-up is slower than a compiled binary (tens of ms
+rather than a few), and this is the one place that cost is paid repeatedly — keep
+`src/main.py` free of expensive imports so the no-op path stays cheap. That is the
+accepted cost of a static manifest.
 
 Two observed sources of **extra** invocations, both harmless because every run recomputes
 from scratch — recorded so the plugin log is not misread as buggy:
@@ -338,14 +367,19 @@ and every member other than `folders` must survive byte for byte. So: no parse a
 re-serialize. Instead, a small tokenizer locates the top-level `"folders"` member's
 value span and the text is spliced.
 
-`src/jsonc.ts` exports:
+`src/jsonc.py` exports:
 
 - `findTopLevelMember(text, key)` → `{ keyStart, valueStart, valueEnd }` or `null`.
   Walks the text tracking string state (with `\` escapes), `//` line comments,
   `/* */` block comments, and brace/bracket depth, so a `]` inside a string or comment
   cannot terminate the array. Only depth-1 members of the root object match.
-- `stripComments(text)` → the same tokenizer, replacing comment spans with spaces, used
+- `strip_comments(text)` → the same tokenizer, replacing comment spans with spaces, used
   to parse the plugin's own config file so it may contain comments.
+
+Both are pure functions over `str`, with no dependency on the rest of the plugin, which is
+what makes them cheap to unit-test. `json.loads` cannot substitute for either: it rejects
+comments and trailing commas outright, and re-serialising with `json.dumps` would destroy
+the user's formatting — the same objection that ruled out parse-and-reserialise generally.
 
 Rendered array, exactly:
 
@@ -362,7 +396,7 @@ Rendered array, exactly:
   The plugin owns this array outright and strict JSON is safer for other tooling. The
   rest of the file keeps whatever style it had.
 - One entry per line, `{ "path": ... }` inline as shown.
-- Paths and names are emitted with `JSON.stringify` so escaping is correct.
+- Paths and names are emitted with `json.dumps` so escaping is correct.
 - If the file has no top-level `folders` member, insert `"folders": [...],` as the
   **first** member of the root object, at the root's inner indentation.
 - If the target file does not exist, log the resolved path and exit non-zero. Do not
@@ -370,12 +404,14 @@ Rendered array, exactly:
 
 Writing:
 
-1. `fs.realpathSync` the target first, so a symlinked workspace file is replaced through
+1. `os.path.realpath` the target first, so a symlinked workspace file is replaced through
    the link rather than having the link clobbered.
 2. Before the first write of a session, copy the original to
    `$HERDR_PLUGIN_STATE_DIR/backup/<basename>.<iso-timestamp>`; keep the newest 10.
-3. Write to a temp file in the same directory, `fchmod` it to the original's mode, then
-   `fs.renameSync` over the target — atomic, and VS Code's watcher sees one event.
+3. Write via `tempfile.mkstemp(dir=<same directory>)`, `os.chmod` it to the original's
+   `stat().st_mode`, `os.fsync` before closing, then `os.replace` over the target —
+   atomic, and VS Code's watcher sees one event. `os.replace` (not `shutil.move`) is what
+   guarantees the rename is atomic on the same filesystem.
 4. Skip the write entirely when the rendered text equals the current file text.
 
 **The unchanged-check must compare resolved paths, not raw text.** VS Code writes newly
@@ -389,21 +425,27 @@ compare only if the existing array cannot be parsed.
 ### Concurrency
 
 A burst of events means several processes racing on one file. Serialize with a lock
-file at `$HERDR_PLUGIN_STATE_DIR/sync.lock`, created `wx` with `{pid, startedAt}`:
+file at `$HERDR_PLUGIN_STATE_DIR/sync.lock`, created via
+`os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)` holding `{pid, startedAt}`:
 
 - Poll for the lock for up to 5000 ms (50 ms interval).
 - Break a lock whose `startedAt` is older than 30 000 ms, logging that it did so.
 - On timeout: log and exit **0**. The last event of a burst will still get the lock, and
   every holder re-reads Herdr state after acquiring it, so a late run is always fresh.
-- Release in a `finally`, and on `SIGTERM`/`SIGINT`.
+- Release in a `finally`, and install `signal.signal` handlers for `SIGTERM`/`SIGINT`
+  that release and re-raise.
+
+An exclusive-create lockfile is preferred over `fcntl.flock` here: it survives being
+inspected by a human, carries the holding pid for debugging, and its staleness rule is
+explicit rather than depending on process-exit semantics.
 
 `debounceMs` (default `0`) sleeps after acquiring the lock and before reading state, for
 users who want to coalesce heavy bursts.
 
 ### Configuration
 
-`$HERDR_PLUGIN_CONFIG_DIR/config.json`, parsed after `stripComments`, so comments are
-allowed. `config.example.json` in the plugin root documents it.
+`$HERDR_PLUGIN_CONFIG_DIR/config.json`, parsed with `json.loads(strip_comments(text))`, so
+comments are allowed. `config.example.json` in the plugin root documents it.
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
@@ -463,34 +505,37 @@ min_herdr_version = "0.8.0"
 description = "Keep a VS Code multi-root workspace file in sync with Herdr Spaces"
 platforms = ["macos", "linux"]
 
-[[build]]
-command = ["deno", "task", "build"]
+# No [[build]] block. The plugin is Python source run in place; `herdr plugin install`
+# fetches and links with nothing to compile.
 
 [[startup]]
-command = ["./bin/herdr-vscode-sync", "--reason", "startup"]
+command = ["./bin/sync", "--reason", "startup"]
 
 [[events]]
 on = "workspace.created"
-command = ["./bin/herdr-vscode-sync", "--reason", "event"]
+command = ["./bin/sync", "--reason", "event"]
 # ... one block per event in the table above
 
 [[actions]]
 id = "sync"
 title = "Sync VS Code workspace"
 contexts = ["global", "workspace"]
-command = ["./bin/herdr-vscode-sync", "--reason", "action"]
+command = ["./bin/sync", "--reason", "action"]
 
 [[actions]]
 id = "doctor"
 title = "VS Code sync diagnostics"
 contexts = ["global"]
-command = ["./bin/herdr-vscode-sync", "--doctor"]
+command = ["./bin/sync", "--doctor"]
 ```
 
-**No runtime dependencies.** The JSONC tokenizer is hand-written (see Rejected
-alternatives) and everything else is Deno built-ins, so the compiled binary is
-self-contained and `deno compile` works with no network. `@std/assert` is a test-only
-dependency, pinned in a committed `deno.lock`.
+**No dependencies at all**, runtime or test. The JSONC tokenizer is hand-written (see
+Rejected alternatives) and everything else is Python stdlib; tests use `unittest`, also
+stdlib. Nothing to pin, nothing to lock, no network needed at install time.
+
+Discovery confirmed 0.8.0 both **accepts** a `[[build]]` block and treats it as
+**optional** — a manifest without one links and runs normally. Declaring `platforms`
+also suppresses the `manifest does not declare platforms` warning that discovery hit.
 
 Windows is excluded from `platforms`: path rendering and the Herdr named-pipe transport
 are untested there.
@@ -501,15 +546,18 @@ are untested there.
 - **The server's `PATH` is whatever launched the server.** It may be a full interactive
   `PATH` (measured: a server started from a VS Code integrated terminal had `deno`,
   `node`, and `git` all resolvable) or nearly empty under launchd. Because it is
-  unknowable, the manifest invokes a compiled binary by plugin-root-relative path. Do not
-  add a hook that shells out to a tool assuming it is on `PATH` — and do not be reassured
-  by it working on your own machine; reach Herdr through `$HERDR_BIN_PATH` and nothing
-  else.
-- **`herdr plugin link` does not run `[[build]]`.** Run `deno task build` after every
-  source change during local development, or the hooks spawn a binary that is stale or
-  absent.
-- **The binary is gitignored and platform-specific.** Never commit `bin/`; never copy one
-  between machines or architectures.
+  unknowable, the interpreter is selected by **absolute path** in `bin/sync` and Herdr is
+  reached through `$HERDR_BIN_PATH`. Do not add a hook that shells out to a tool assuming
+  it is on `PATH`, and do not be reassured by it working on your own machine.
+- **`bin/sync` and `src/main.py` must be committed executable.** A missing `+x` bit is the
+  most likely first failure and shows up only as a spawn error in `herdr plugin log list`.
+- **Do not add a `#!/usr/bin/env python3` shebang and invoke the `.py` directly.** `env`
+  resolves through `PATH`, which is exactly the thing that cannot be trusted. The shim
+  exists for this reason.
+- **Target Python 3.9, not the version you happen to be running.** The devcontainer's
+  3.12 will silently accept `match`, PEP 604 unions, and `tomllib`; stock macOS 3.9.6
+  will not. There is no type checker or linter in the loop to catch this — only the 3.9
+  floor stated in the README.
 - **Hook stdout goes nowhere visible.** `herdr plugin log list --plugin
   vscode-workspace-sync` after every trigger is the only way to see it.
 - **`platforms = []` is an error**, not a wildcard.
@@ -580,11 +628,16 @@ are untested there.
   `$HERDR_SOCKET_PATH` matches a configured `sessionSocket` (unset = the default session
   only); at minimum, document that the plugin supports one session at a time and have
   `--doctor` report the socket it saw. Single-session users are unaffected.
-- **Installing from GitHub requires Deno on the target machine.** `herdr plugin install`
-  runs `[[build]]`, so a user without Deno gets a build failure at install time rather
-  than a broken plugin at run time. Documented as a prerequisite in the README; the
-  plugin docs anticipate exactly this pattern ("document required system tools such as
-  `cargo`, `npm`, `bun`, or `lua`").
+- **Installing from GitHub requires only a Python 3.** There is no `[[build]]` step, so
+  nothing can fail at install time for want of a toolchain. The residual risk is narrow:
+  on macOS `/usr/bin/python3` is a Command Line Tools shim, so a machine without CLT
+  *and* without Homebrew Python gets exit 127 and the shim's install instructions. In
+  practice a Herdr user has one or the other. Stated as a one-line prerequisite in the
+  README rather than a build dependency.
+- **`herdr plugin install` from GitHub is untested.** Discovery verified that `[[build]]`
+  is optional and that a build-less manifest links and runs via `plugin link`, but never
+  exercised `plugin install` against a published repo. First host validation step should
+  be an install from the real repo, not just a link.
 - ~~**A plugin-root-relative `command` is assumed to resolve.**~~ **RESOLVED** — confirmed
   directly on 0.8.0 for both an action and event hooks; cwd is the plugin root.
 
@@ -603,18 +656,26 @@ are untested there.
   are explicit that startup hooks are one-shot initialization, not supervised daemons —
   nothing restarts a dead subscriber. Per-event hooks are the sanctioned design and
   Space events are human-paced.
-- **`jsonc-parser` (what VS Code itself uses) for the edit.** Deno bundles dependencies
-  into the compiled binary, so the old objection — an `npm ci` that `plugin link` never
-  runs — no longer applies. It is rejected on rendering instead: its
-  `modify`/`applyEdits` formats inserted objects one key per line, so entries would come
-  out as four lines each rather than the compact `{ "path": … }` form in
+- **Any third-party JSONC library for the edit.** Adding a dependency would reintroduce
+  an install step — the entire thing this design avoids. Independently, VS Code's own
+  `jsonc-parser` formats inserted objects one key per line, so entries would come out as
+  four lines each rather than the compact `{ "path": … }` form in
   `docs/example-vscode-workspace.md`. This is a file the user reads; exact rendering
   control is worth ~100 lines of tokenizer.
-- **`deno run` straight from the manifest.** Needs `deno` on the server's `PATH` — the
-  exact problem the compiled binary exists to avoid.
-- **A POSIX-sh entrypoint that locates an interpreter before exec'ing.** Solves the
-  `PATH` problem only by re-introducing it one level down, and adds a shell layer to
-  debug through when a hook silently fails.
+- **`json.loads` / `json.dumps` for the whole file.** Rejects comments and trailing commas,
+  and re-serialising destroys the user's formatting.
+- **TypeScript on Deno, compiled with `deno compile`.** This was the previous design. It
+  is correct and `PATH`-independent, but it costs a `[[build]]` step, which means every
+  installing user needs Deno 2.x, or the project needs per-platform binaries published as
+  release attachments with checksums. For a shared plugin that overhead is the dominant
+  cost, and an absolute interpreter path achieves the same `PATH` independence for free.
+  Reconsider only if the plugin ever needs something outside the Python stdlib.
+- **`deno run` or `node` straight from the manifest.** Both need a toolchain the user must
+  install, and neither has a reliable absolute path — Node especially, given
+  nvm/fnm/volta/Homebrew all install elsewhere. macOS ships neither.
+- **Pure POSIX sh with `jq`.** `jq` is not preinstalled on macOS, so it is a real
+  dependency; and byte-preserving JSONC splicing in sh is far more fragile than the
+  tokenizer it would replace.
 - **Parsing and re-serializing the whole workspace file.** Destroys the user's comments
   and formatting.
 - **A `pathMap` prefix-rewrite config for remote setups.** Not needed for
@@ -628,40 +689,41 @@ translation; Windows support; syncing Herdr tabs to VS Code editor groups.
 
 ## Checklist
 
-- [ ] `vscode-workspace-sync/herdr-plugin.toml` — manifest exactly as specified above,
-      with the `[[build]]` block and all seven `[[events]]` blocks
-- [ ] `vscode-workspace-sync/deno.json` — `build` / `test` / `check` tasks exactly as
-      specified, plus `fmt` and `lint` config; no runtime imports
-- [ ] `vscode-workspace-sync/deno.lock` — committed, pinning the `@std/assert` test
-      dependency
-- [ ] `vscode-workspace-sync/.gitignore` — `bin/`
-- [ ] `vscode-workspace-sync/src/types.ts` — Herdr JSON shapes as interfaces, transcribed
-      from `docs/herdr-vscode-sync-facts.md` probes 2–5 (note the `.result.snapshot`
-      level, the absence of `cwd` on workspace records, and the pane join), with a comment
-      naming Herdr 0.8.0 / protocol 19 as the version observed
-- [ ] `vscode-workspace-sync/src/jsonc.ts` — `findTopLevelMember`, `stripComments`
-- [ ] `vscode-workspace-sync/src/config.ts` — load, defaults, `~` expansion, env
+- [ ] `vscode-workspace-sync/herdr-plugin.toml` — manifest exactly as specified above:
+      no `[[build]]` block, `platforms` declared, all seven `[[events]]` blocks, and every
+      `command` invoking `./bin/sync`
+- [ ] `vscode-workspace-sync/bin/sync` — POSIX-sh interpreter shim exactly as specified
+      (absolute-path candidates, `PATH` fallback, exit 127 with install instructions),
+      committed **executable** (the `.py` files must not be, and need no shebang)
+- [ ] `vscode-workspace-sync/.gitignore` — `__pycache__/`, `*.pyc`
+- [ ] `vscode-workspace-sync/src/types.py` — Herdr JSON shapes as dataclasses or
+      TypedDicts, transcribed from `docs/herdr-vscode-sync-facts.md` probes 2–5 (note the
+      `.result.snapshot` level, the absence of `cwd` on workspace records, and the pane
+      join), with a comment naming Herdr 0.8.0 / protocol 19 as the version observed
+- [ ] `vscode-workspace-sync/src/jsonc.py` — `find_top_level_member`, `strip_comments`
+- [ ] `vscode-workspace-sync/src/config.py` — load, defaults, `~` expansion, env
       override, unknown-key warnings, validation errors, and the `sessionSocket` guard
       (exit 0 without writing when `$HERDR_SOCKET_PATH` does not match)
-- [ ] `vscode-workspace-sync/src/herdr.ts` — run `herdr api snapshot` via
-      `new Deno.Command($HERDR_BIN_PATH)` (or read the fake snapshot file) and reduce it
-      to ordered `{id,label,path}` records plus `focusedWorkspaceId`
-- [ ] `vscode-workspace-sync/src/folders.ts` — pure `computeFolders(spaces, focusedId,
+- [ ] `vscode-workspace-sync/src/herdr.py` — run `herdr api snapshot` via
+      `subprocess.run([os.environ["HERDR_BIN_PATH"], "api", "snapshot"])` (or read the
+      fake snapshot file) and reduce it to ordered `{id,label,path}` records plus
+      `focused_workspace_id`
+- [ ] `vscode-workspace-sync/src/folders.py` — pure `compute_folders(spaces, focused_id,
       config)` implementing resolve → exists → exclude → dedupe → `name`
-- [ ] `vscode-workspace-sync/src/rewrite.ts` — pure `renderFolders(entries, baseIndent)`
-      and `spliceFolders(text, entries)`, including the insert-when-absent path
-- [ ] `vscode-workspace-sync/src/write.ts` — realpath, backup rotation (keep 10), temp
-      file + mode preservation + atomic rename, unchanged-content skip
-- [ ] `vscode-workspace-sync/src/lock.ts` — exclusive create, 5 s wait, 30 s stale break,
-      release on exit and on `SIGTERM`/`SIGINT`
-- [ ] `vscode-workspace-sync/src/main.ts` — argv (`--reason`, `--doctor`), orchestration,
-      one-line stdout summary, exit codes
+- [ ] `vscode-workspace-sync/src/rewrite.py` — pure `render_folders(entries, base_indent)`
+      and `splice_folders(text, entries)`, including the insert-when-absent path
+- [ ] `vscode-workspace-sync/src/write.py` — realpath, backup rotation (keep 10), mkstemp
+      + mode preservation + `os.fsync` + `os.replace`, unchanged-content skip comparing
+      **resolved** paths
+- [ ] `vscode-workspace-sync/src/lock.py` — `O_CREAT|O_EXCL` create, 5 s wait, 30 s stale
+      break, release in `finally` and on `SIGTERM`/`SIGINT`
+- [ ] `vscode-workspace-sync/src/main.py` — argv via `argparse` (`--reason`, `--doctor`),
+      orchestration, one-line stdout summary, exit codes
 - [ ] `vscode-workspace-sync/config.example.json` — every key with its default, commented
-- [ ] `vscode-workspace-sync/README.md` — Deno build prerequisite, install, `deno task
-      build` before `plugin link`, `herdr plugin config-dir`, config table, both modes,
-      why the compile-time permissions are broad, the pin-`folders[0]` recommendation,
-      the "manage folders in Herdr, not the VS Code UI" warning, and the recorded Herdr
-      JSON shapes
+- [ ] `vscode-workspace-sync/README.md` — Python 3.9+ as the only prerequisite, install via
+      `herdr plugin install`, `herdr plugin config-dir`, config table, both modes, the
+      pin-`folders[0]` recommendation with its measured cost, the "manage folders in Herdr,
+      not the VS Code UI" warning, and the recorded Herdr JSON shapes
 - [ ] `vscode-workspace-sync/test/fixtures/` — at minimum: the file from
       `docs/example-vscode-workspace.md`; a file with no `folders` member; a file with a
       `]` inside a string value and inside a comment; a file with block comments between
@@ -669,27 +731,33 @@ translation; Windows support; syncing Herdr tabs to VS Code editor groups.
       one-property-per-line objects, as VS Code itself writes them** (see facts doc probe
       14); `snapshot.json` matching the real `api snapshot` shape from discovery, including
       the `.result.snapshot` level, a `panes` array, and a worktree-backed Space
-- [ ] `vscode-workspace-sync/test/jsonc.test.ts`
-- [ ] `vscode-workspace-sync/test/folders.test.ts`
-- [ ] `vscode-workspace-sync/test/rewrite.test.ts` — asserts non-`folders` bytes are
+- [ ] `vscode-workspace-sync/test/test_jsonc.py`
+- [ ] `vscode-workspace-sync/test/test_folders.py`
+- [ ] `vscode-workspace-sync/test/test_rewrite.py` — asserts non-`folders` bytes are
       unchanged
 - [ ] Root `README.md` — add a plugin index entry pointing at the new directory
-- [ ] `docs/herdr-research-notes.md` — record the observed `api snapshot` /
-      `workspace list` shapes and which event hooks actually fired
+- [ ] `docs/herdr-research-notes.md` — already updated by discovery; extend only if
+      implementation turns up something new
 
 ## Validation
 
 ### Offline — runnable in this devcontainer
 
-- [ ] `cd vscode-workspace-sync && deno task check` passes — type check, lint, and
-      `fmt --check` all clean
-- [ ] `deno task test` passes
-- [ ] `deno task build` produces `bin/herdr-vscode-sync` and `./bin/herdr-vscode-sync
-      --doctor` runs
+- [ ] `cd vscode-workspace-sync && python3 -m unittest discover -s test -v` passes
+- [ ] `python3 -m py_compile src/*.py` is clean — the cheapest available syntax gate,
+      since there is no type checker in the loop
+- [ ] **Python 3.9 floor:** the sources contain no `match` statement, no PEP 604 `X | Y`
+      annotation evaluated at runtime, and no `tomllib` import. Grep for them; the
+      devcontainer's 3.12 will not catch these
+- [ ] `./bin/sync --doctor` runs, and `bin/sync` is mode `755`
 - [ ] **PATH independence:** `env -i HOME=$HOME HERDR_PLUGIN_CONFIG_DIR=…
-      HERDR_VSCODE_SYNC_FAKE_SNAPSHOT=… ./bin/herdr-vscode-sync --doctor` succeeds with
-      no `PATH` at all — this is the property the whole build design exists to provide,
-      so test it rather than assume it
+      HERDR_VSCODE_SYNC_FAKE_SNAPSHOT=… ./bin/sync --doctor` succeeds with **no `PATH` at
+      all** — this is the property the shim exists to provide, so test it rather than
+      assume it
+- [ ] **Shim fallback:** with `/usr/bin/python3` temporarily masked (run the shim under a
+      `PATH`-less env and a candidate list pointed at a nonexistent path, or test the
+      selection logic directly), the shim exits 127 with the install message rather than
+      failing obscurely
 - [ ] Round-trip: for each fixture, splicing back its own existing folders produces a
       byte-identical file
 - [ ] A fixture whose `folders` hold **relative** paths (as VS Code emits them) resolves to
@@ -705,12 +773,12 @@ translation; Windows support; syncing Herdr tabs to VS Code editor groups.
 - [ ] Missing target file exits non-zero and names the resolved path
 - [ ] Missing `workspaceFile` config exits non-zero and names the config path
 - [ ] `HERDR_VSCODE_SYNC_FAKE_SNAPSHOT=test/fixtures/snapshot.json
-      HERDR_PLUGIN_CONFIG_DIR=… ./bin/herdr-vscode-sync` rewrites a scratch copy of a fixture
+      HERDR_PLUGIN_CONFIG_DIR=… ./bin/sync` rewrites a scratch copy of a fixture
       to the expected `folders`, and a second run reports `unchanged`
 - [ ] Same command with `--doctor` writes nothing and prints the computed folder list
 - [ ] `mode: "active"` yields exactly the focused Space plus any pinned folders
-- [ ] Two concurrent `./bin/herdr-vscode-sync` runs against the same scratch file both exit 0 and
-      leave valid JSONC (a `deno eval` parse of the result succeeds)
+- [ ] Two concurrent `./bin/sync` runs against the same scratch file both exit 0 and
+      leave valid JSONC (a `python3 -c 'json.loads(strip_comments(...))'` parse succeeds)
 
 ### Host — requires Herdr + VS Code, run by the user
 
@@ -718,7 +786,10 @@ translation; Windows support; syncing Herdr tabs to VS Code editor groups.
       terminals survive; mode `active` is viable with a pinned `folders[0]`. Recorded in
       `docs/herdr-vscode-sync-facts.md`
 - [ ] `herdr plugin link ./vscode-workspace-sync` succeeds and
-      `herdr plugin list` shows it enabled
+      `herdr plugin list` shows it enabled, with no `platforms` warning
+- [ ] **Install path:** after publishing, `herdr plugin install <owner>/<repo>` succeeds on
+      a machine that has never had Deno or Node — proving the no-build design end to end.
+      This was never exercised during discovery
 - [ ] `herdr plugin action invoke vscode-workspace-sync.doctor` then
       `herdr plugin log list --plugin vscode-workspace-sync --limit 5` shows the resolved
       config and computed folders, exit 0
@@ -751,27 +822,28 @@ Created:
 - `.plans/PLAN.md` — plan index (this plan registered under Pending / phase 1)
 - `.plans/vscode-workspace-sync.md` — this document
 - `vscode-workspace-sync/herdr-plugin.toml`
-- `vscode-workspace-sync/deno.json`
-- `vscode-workspace-sync/deno.lock`
 - `vscode-workspace-sync/.gitignore`
 - `vscode-workspace-sync/config.example.json`
 - `vscode-workspace-sync/README.md`
-- `vscode-workspace-sync/src/main.ts`
-- `vscode-workspace-sync/src/types.ts`
-- `vscode-workspace-sync/src/jsonc.ts`
-- `vscode-workspace-sync/src/config.ts`
-- `vscode-workspace-sync/src/herdr.ts`
-- `vscode-workspace-sync/src/folders.ts`
-- `vscode-workspace-sync/src/rewrite.ts`
-- `vscode-workspace-sync/src/write.ts`
-- `vscode-workspace-sync/src/lock.ts`
-- `vscode-workspace-sync/test/jsonc.test.ts`
-- `vscode-workspace-sync/test/folders.test.ts`
-- `vscode-workspace-sync/test/rewrite.test.ts`
+- `vscode-workspace-sync/bin/sync` (POSIX-sh interpreter shim, committed executable)
+- `vscode-workspace-sync/src/main.py`
+- `vscode-workspace-sync/src/types.py`
+- `vscode-workspace-sync/src/jsonc.py`
+- `vscode-workspace-sync/src/config.py`
+- `vscode-workspace-sync/src/herdr.py`
+- `vscode-workspace-sync/src/folders.py`
+- `vscode-workspace-sync/src/rewrite.py`
+- `vscode-workspace-sync/src/write.py`
+- `vscode-workspace-sync/src/lock.py`
+- `vscode-workspace-sync/test/test_jsonc.py`
+- `vscode-workspace-sync/test/test_folders.py`
+- `vscode-workspace-sync/test/test_rewrite.py`
 - `vscode-workspace-sync/test/fixtures/*.code-workspace`
 - `vscode-workspace-sync/test/fixtures/snapshot.json`
-- `vscode-workspace-sync/bin/herdr-vscode-sync` (build output, gitignored)
 - `README.md` (repo root — does not exist yet; create with a plugin index)
+
+No `deno.json`, `deno.lock`, or `bin/` build output: there is no build step and no
+dependency manifest of any kind.
 
 Modified:
 
