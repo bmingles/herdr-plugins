@@ -19,10 +19,16 @@ Or link a working tree while developing:
 
 ```sh
 herdr plugin link ./vscode-workspace-sync
-herdr plugin log list --plugin vscode-workspace-sync --limit 5
 ```
 
-Each plugin directory has its own README with configuration and diagnostics.
+**Installing is not enough on its own.** Every plugin here also needs a `config.json` in
+the directory printed by `herdr plugin config-dir <plugin-id>`, and does nothing until it
+exists. Follow the plugin's own README for that — for this one,
+[**vscode-workspace-sync/README.md → Install**](vscode-workspace-sync/README.md#install)
+walks through the config file, a first `--doctor` run, and the initial sync.
+
+Hook output is invisible except through `herdr plugin log list --plugin <plugin-id>`;
+check it after any trigger rather than guessing.
 
 ## Docs
 
