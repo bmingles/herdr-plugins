@@ -1,5 +1,8 @@
 # Showing devcontainer agent status in host Herdr
 
+*Distilled for agent use as the `herdr-devcontainer-agent-running` skill in
+`.claude/skills/` — keep the two in sync when either changes.*
+
 Herdr normally recognises a coding agent by inspecting the foreground process in a
 pane. An agent running inside a devcontainer lives in a different PID namespace, so
 the host only sees `docker` — the pane shows no agent and no status.

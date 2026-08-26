@@ -8,6 +8,10 @@ established by experiment rather than documentation.
 [devcontainer-agent-status.md](./devcontainer-agent-status.md). These notes exist so
 the reasoning and the dead ends don't have to be rediscovered.
 
+The plugin system and socket API sections are distilled for agent use as the
+`herdr-plugin-authoring` skill in `.claude/skills/`; the detection and dead-end
+sections as `herdr-devcontainer-agent-running`. Keep them in sync.
+
 Verified against Herdr **0.8.0 (protocol 19)** on macOS with Docker Desktop, unless
 noted. Latest at time of writing was 0.8.2 (protocol 20).
 
