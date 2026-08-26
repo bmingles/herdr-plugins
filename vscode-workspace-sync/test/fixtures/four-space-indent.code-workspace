@@ -1,0 +1,9 @@
+{
+    "settings": {
+        "window.title": "FOUR"
+    },
+    "folders": [
+        { "path": "/Users/jdoe/alpha" },
+        { "path": "/Users/jdoe/beta" }
+    ]
+}

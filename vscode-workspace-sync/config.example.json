@@ -1,0 +1,15 @@
+{
+  // Absolute path to the .code-workspace file this plugin owns. Required.
+  // "~" is expanded. The file must already exist -- the plugin will not create it.
+  "workspaceFile": "~/code/my-workspace.code-workspace",
+
+  // "mirror" (default) -> folders mirrors every Space, in sidebar order.
+  // "active"           -> folders holds only the focused Space.
+  "mode": "mirror",
+
+  // Absolute paths always emitted first, before any Space, and never given a "name".
+  // Strongly recommended: whatever sits at folders[0] is rewritten whenever the first
+  // Space changes, and changing folders[0] restarts VS Code's extension host. Pinning
+  // one stable folder keeps all Space churn at index 1+, which costs nothing.
+  "pinnedFolders": []
+}

@@ -1,0 +1,17 @@
+{
+	"folders": [
+		{
+			"path": "spaces/alpha"
+		},
+		{
+			"name": "GAMMA-RENAMED",
+			"path": "spaces/gamma"
+		},
+		{
+			"path": "spaces/beta"
+		}
+	],
+	"settings": {
+		"window.title": "AS-VSCODE-WROTE-IT"
+	}
+}

@@ -1,0 +1,12 @@
+{
+  /* leading block comment
+     spanning lines */
+  "folders": [
+    { "path": "/Users/jdoe/alpha" }
+  ],
+  /* between members */
+  "settings": {
+    "window.title": "BLOCK"
+  }
+  /* trailing block comment */
+}

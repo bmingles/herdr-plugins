@@ -1,0 +1,50 @@
+id = "vscode-workspace-sync"
+name = "VS Code Workspace Sync"
+version = "0.1.0"
+min_herdr_version = "0.8.0"
+description = "Keep a VS Code multi-root workspace file in sync with Herdr Spaces"
+platforms = ["macos", "linux"]
+
+# No [[build]] block. The plugin is Python source run in place; `herdr plugin install`
+# fetches and links with nothing to compile.
+
+[[startup]]
+command = ["./bin/sync", "--reason", "startup"]
+
+[[events]]
+on = "workspace.created"
+command = ["./bin/sync", "--reason", "event"]
+
+[[events]]
+on = "workspace.closed"
+command = ["./bin/sync", "--reason", "event"]
+
+[[events]]
+on = "workspace.renamed"
+command = ["./bin/sync", "--reason", "event"]
+
+[[events]]
+on = "workspace.moved"
+command = ["./bin/sync", "--reason", "event"]
+
+[[events]]
+on = "workspace.reordered"
+command = ["./bin/sync", "--reason", "event"]
+
+[[events]]
+on = "workspace.updated"
+command = ["./bin/sync", "--reason", "event"]
+
+[[events]]
+on = "workspace.focused"
+command = ["./bin/sync", "--reason", "event"]
+
+[[actions]]
+id = "sync"
+title = "Sync VS Code workspace"
+contexts = ["global", "workspace"]
+command = ["./bin/sync", "--reason", "action"]
+
+# No `doctor` action on purpose. A plugin action's stdout goes only to
+# `herdr plugin log list`, JSON-escaped -- the least legible channel available, and a
+# poor route for a diagnostic. Run `./bin/sync --doctor` directly instead; see README.

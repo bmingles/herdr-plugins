@@ -1,0 +1,9 @@
+{
+  // No "folders" member at all: the plugin must insert one as the first root member.
+  "settings": {
+    "window.title": "NO-FOLDERS-FIXTURE"
+  },
+  "extensions": {
+    "recommendations": []
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "folders": [
+    { "path": "/Users/jdoe/alpha" },
+    { "path": "/Users/jdoe/beta", "name": "api" }
+  ],
+  "settings": {
+    "window.title": "CANONICAL"
+  }
+}

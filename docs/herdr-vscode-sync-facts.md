@@ -869,8 +869,48 @@ byte-preserving splice is safe.
 
 ### When VS Code writes the file — it rewrites everything
 
-Forced with `code --add`, the CLI equivalent of "Add Folder to Workspace" (the user's own
-workspace files were backed up first and verified unchanged afterwards):
+**Correction (retested 2026-08-26).** `code --add` is **not** equivalent to the in-editor
+"Add Folder to Workspace" command, and the two differ on the single most important point.
+Both results are below; the UI result is the one that matters for design decisions, since
+that is the path a user actually takes.
+
+#### Via the in-editor command — comments SURVIVE
+
+"Add Folder to Workspace" run from the command palette on a file carrying two comments and
+trailing commas:
+
+```json
+{
+  // COMMENT-MARKER: does this survive a UI folder add?
+  "folders": [
+    {
+      "path": "…/wb/one"
+    },
+    {
+      "path": "…/wb/two"
+    },
+    {
+      "path": "three"
+    }
+  ],
+  "settings": {
+    // COMMENT-MARKER-2 inside settings
+    "window.title": "WRITEBACK"
+  }
+}
+```
+
+**Both comments survived**, including the one nested inside `settings`. What did change:
+trailing commas were stripped, every folder object was expanded to one property per line,
+and the new path was written **relative** to the workspace file's directory.
+
+This is consistent with VS Code using surgical `jsonc` edits (the same machinery that keeps
+comments in `settings.json`) rather than a re-serialise.
+
+#### Via `code --add` — comments are deleted
+
+The CLI path *does* re-serialise and drops comments (original observation below). Do not
+generalise from it to the UI:
 
 ```
 $ code -r probe13.code-workspace       # target this window deterministically
@@ -905,14 +945,20 @@ Result:
 }
 ```
 
-Four things happened:
+Four things happened **on this CLI path**:
 
-1. **The comment was deleted.**
-2. **Trailing commas were stripped** — normalized to strict JSON.
-3. **Every folder object was expanded to multi-line**, one property per line — precisely
-   the rendering the plan rejected `jsonc-parser` for producing.
+1. **The comment was deleted** — *this does not happen via the UI command.*
+2. **Trailing commas were stripped** — normalized to strict JSON. (Also true via the UI.)
+3. **Every folder object was expanded to multi-line**, one property per line. (Also true
+   via the UI.)
 4. **The newly added path was written relative** (`"p13-epsilon"`), resolved against the
-   workspace file's own directory. Pre-existing absolute paths were left absolute.
+   workspace file's own directory. Pre-existing absolute paths were left absolute. (Also
+   true via the UI.)
+
+**Net, for design purposes:** VS Code **preserves comments** when the user adds a folder
+through the editor, strips trailing commas, expands folder objects, and emits relative
+paths. A plugin that destroys comments would therefore be *worse* than the editor, not
+merely equivalent to it — which strengthens the case for a comment-preserving splice.
 
 **Does the plugin fight the editor over path form? Yes.** Two required consequences:
 

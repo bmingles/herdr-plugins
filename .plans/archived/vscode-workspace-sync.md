@@ -7,20 +7,77 @@ A Herdr plugin that keeps the `folders` array of a VS Code multi-root
 `herdr plugin install <owner>/<repo>` is the whole install story for a shared plugin. See
 [Runtime](#runtime-python-39-stdlib-only-no-build).
 
-> **Prerequisite: DONE.** [`vscode-workspace-sync-discovery.md`](archived/vscode-workspace-sync-discovery.md)
+> **Prerequisite: DONE.** [`vscode-workspace-sync-discovery.md`](vscode-workspace-sync-discovery.md)
 > ran on 2026-08-26 against Herdr 0.8.0 / protocol 19 and VS Code 1.134.0. All three
 > previously-guessed decisions are now settled: Space state is read as corrected under
 > "Reading Herdr state", all seven hooked events fire, and mode `active` **is** viable
 > given a pinned `folders[0]`. Read
-> [`docs/herdr-vscode-sync-facts.md`](../docs/herdr-vscode-sync-facts.md) and the
+> [`docs/herdr-vscode-sync-facts.md`](../../docs/herdr-vscode-sync-facts.md) and the
 > `## Discovery corrections` section below before writing code — the JSON shapes in this
 > plan have been updated in place, so anything *not* listed as corrected held as written.
+
+## Post-implementation simplification
+
+After the plugin was implemented and validated, it was deliberately cut back. The plan
+below still describes the *original* design; these five things were removed as unearned
+surface, and the sections describing them are stale:
+
+1. **`lock.py` and the whole concurrency section.** A burst can race, but every run
+   recomputes from scratch and finishes with one atomic `os.replace`, so the loser of a
+   race is corrected by the next event — and `folders` is regenerable from Herdr by
+   definition. The `lock-timeout` summary result is gone with it.
+2. **Backup rotation.** The plugin owns exactly one explicitly configured file, and its
+   `folders` array is rebuildable from the Space list, so the only genuinely
+   non-recoverable content is the user's own `settings`/`launch`/`tasks` — which the
+   splice never touches and which `test_rewrite.py` asserts byte-identical.
+3. **Four config keys:** `excludePaths`, `excludeLabels`, `debounceMs`, and the
+   `sessionSocket` *key*. Config is now `workspaceFile`, `mode`, `pinnedFolders`.
+4. **`useSpaceLabels`.** The behaviour it toggled is now always on: emit `name` when a
+   Space's label differs from the path basename.
+5. **`src/types.py` / `herdr_types.py`.** The eight `TypedDict`s were documentation for a
+   type checker this project does not run; the observed JSON shapes are now a comment
+   block at the top of `src/herdr.py`, and the two runtime classes (`Space`,
+   `FolderEntry`) live there too.
+
+6. **The `doctor` plugin action** (the `--doctor` *flag* stays). A plugin action's stdout
+   goes only to `herdr plugin log list`, JSON-escaped — the least legible channel
+   available, and a poor route for a diagnostic. The README documents running
+   `./bin/sync --doctor` directly instead. The `sync` action stays: it is invoked for its
+   effect, and the one-line summary in the log confirms it.
+7. **The unified diff preview in `--doctor`** (and the `difflib` import). Replaced by a
+   one-line `would write: yes|no`. A dry-run diff earns its place in a destructive tool;
+   `folders` is regenerable and the write is atomic, so running `sync` and reading the
+   file is the simpler answer.
+
+**Kept deliberately:** the named-session guard, now hardcoded rather than configurable —
+plugin registration is global, so without it a second Herdr session would rewrite the
+same file from its own Space list and the folders would flap. It is ~10 lines in
+`config.named_session`.
+
+8. **Redundant tests and one fixture.** Cut end-to-end CLI cases that only re-covered
+   unit-level config errors and folder computation, three of four `--doctor` output
+   cases, fixture-specific splice cases already covered by the generic all-fixtures
+   property loops, and the `tab-indent` fixture (`four-space-indent` already proves the
+   base indent is copied from the `"folders"` line).
+
+   **Kept deliberately:** the eight property loops that iterate every workspace fixture —
+   ~95 lines of fixtures buying the broadest coverage in the suite — and in particular
+   `test_non_folders_bytes_are_unchanged_for_every_fixture`. The `folders` array is
+   regenerable from Herdr, but the user's `settings`/`launch`/`tasks` and their comments
+   are **not**; that test is what guards them against a mis-located splice span. Also kept:
+   `TestShim` (the design's load-bearing `PATH`-independence properties), the
+   resolved-path regression tests, and `TestReduceSnapshot`, which encodes the
+   discovery findings (`.result.snapshot` level, the pane join, `active_tab_id` winning
+   over lowest `pane_id`, `worktree.checkout_path` never used, duplicate labels).
+
+Result: 1,650 → 1,178 source lines, 1,508 → 1,130 test lines, 119 → 106 tests, all
+passing on `/usr/bin/python3` 3.9.6. Behaviour is otherwise unchanged.
 
 ## Discovery corrections
 
 Discovery ran on 2026-08-26 against **Herdr 0.8.0 / protocol 19** and **VS Code 1.134.0**
 on macOS arm64. Full evidence in
-[`docs/herdr-vscode-sync-facts.md`](../docs/herdr-vscode-sync-facts.md). Assumptions that
+[`docs/herdr-vscode-sync-facts.md`](../../docs/herdr-vscode-sync-facts.md). Assumptions that
 changed:
 
 1. **`api snapshot` has an extra `snapshot` level.** The plan read
@@ -105,12 +162,17 @@ changed:
     correct** — nothing breaks, no terminal dies — so pinning is a strong recommendation
     for `active` mode, not an enforced constraint.
 
-14. **VS Code rewrites the whole file when *it* writes.** Confirmed via `code --add`: the
-    comment was deleted, trailing commas stripped, every folder object expanded to
-    one-property-per-line, and the newly added path written **relative** to the workspace
-    file's directory. VS Code does *not* reformat in response to the plugin's own writes.
-    Consequence: **reading must resolve relative paths** against `dirname(workspaceFile)`,
-    or the unchanged-content check will rewrite the file on every run after any UI edit.
+14. **VS Code reformats the file when *it* writes — but keeps comments.** Confirmed via
+    the in-editor "Add Folder to Workspace": comments survive (including nested inside
+    `settings`), trailing commas are stripped, every folder object is expanded to
+    one-property-per-line, and the newly added path is written **relative** to the
+    workspace file's directory. (`code --add` from the CLI is a *different* path that does
+    re-serialise and delete comments; an earlier draft of this plan generalised from it
+    incorrectly.) VS Code does *not* reformat in response to the plugin's own writes.
+    Two consequences: **reading must resolve relative paths** against
+    `dirname(workspaceFile)`, or the unchanged-content check rewrites the file on every run
+    after any UI edit; and since the editor preserves comments, the plugin's
+    comment-preserving splice is a requirement to avoid being *worse* than the editor.
 
 Assumptions that **held** as written: plugin-root cwd; `min_herdr_version = "0.8.0"`
 (`api snapshot` exists at 0.8.0); `workspace.metadata_updated` correctly not hooked
@@ -580,14 +642,15 @@ are untested there.
   is attached to a devcontainer or an SSH remote while Herdr runs on the host, the paths
   in `folders` are host paths — which is what VS Code wants anyway. A Herdr running
   inside the container and a VS Code window on the host is out of scope.
-- **VS Code rewrites the *whole* workspace file when the user changes folders through the
-  UI.** Measured via `code --add`: the file's comments were **deleted**, trailing commas
-  stripped, every folder object re-indented to one property per line, and the added path
-  written **relative** to the workspace file's directory. Pre-existing absolute paths were
-  left absolute. So the damage is not confined to `folders` — say so in the README:
-  manage folders through Herdr, not the VS Code UI. Conversely, VS Code does **not**
-  reformat the file in response to the plugin's own writes, so the byte-preserving splice
-  is safe.
+- **VS Code reformats the workspace file when the user changes folders through the UI, but
+  it does NOT delete comments.** Measured via the in-editor "Add Folder to Workspace":
+  comments survive (including inside `settings`), trailing commas are stripped, folder
+  objects are expanded to one property per line, and the added path is written **relative**
+  to the workspace file's directory. The `code --add` CLI takes a different code path that
+  *does* re-serialise and drop comments — do not generalise from it. Since the editor
+  itself preserves comments, a plugin that destroyed them would be worse than the editor;
+  the byte-preserving splice is the right call. VS Code does **not** reformat the file in
+  response to the plugin's own writes.
 - **Existing `folders` entries may hold relative paths.** Resolve them against
   `dirname(workspaceFile)` before comparing, or the unchanged-check misfires forever after
   one UI edit.
@@ -689,95 +752,122 @@ translation; Windows support; syncing Herdr tabs to VS Code editor groups.
 
 ## Checklist
 
-- [ ] `vscode-workspace-sync/herdr-plugin.toml` — manifest exactly as specified above:
+- [x] `vscode-workspace-sync/herdr-plugin.toml` — manifest exactly as specified above:
       no `[[build]]` block, `platforms` declared, all seven `[[events]]` blocks, and every
       `command` invoking `./bin/sync`
-- [ ] `vscode-workspace-sync/bin/sync` — POSIX-sh interpreter shim exactly as specified
+- [x] `vscode-workspace-sync/bin/sync` — POSIX-sh interpreter shim exactly as specified
       (absolute-path candidates, `PATH` fallback, exit 127 with install instructions),
       committed **executable** (the `.py` files must not be, and need no shebang)
-- [ ] `vscode-workspace-sync/.gitignore` — `__pycache__/`, `*.pyc`
-- [ ] `vscode-workspace-sync/src/types.py` — Herdr JSON shapes as dataclasses or
+- [x] `vscode-workspace-sync/.gitignore` — `__pycache__/`, `*.pyc`
+- [x] `vscode-workspace-sync/src/types.py` — Herdr JSON shapes as dataclasses or
       TypedDicts, transcribed from `docs/herdr-vscode-sync-facts.md` probes 2–5 (note the
       `.result.snapshot` level, the absence of `cwd` on workspace records, and the pane
-      join), with a comment naming Herdr 0.8.0 / protocol 19 as the version observed
-- [ ] `vscode-workspace-sync/src/jsonc.py` — `find_top_level_member`, `strip_comments`
-- [ ] `vscode-workspace-sync/src/config.py` — load, defaults, `~` expansion, env
+      join), with a comment naming Herdr 0.8.0 / protocol 19 as the version observed.
+      **Delivered as `src/herdr_types.py`, not `src/types.py`.** `src` is `sys.path[0]`
+      when `bin/sync` hands `src/main.py` to the interpreter, so a `types.py` there
+      shadows the stdlib `types` module and the first stdlib import
+      (`json` → `re` → `enum` → `from types import MappingProxyType`) dies with a
+      partially-initialised-module `ImportError`. Reproduced on `/usr/bin/python3` 3.9.6;
+      the filename was the only thing that could be changed to fix it.
+- [x] `vscode-workspace-sync/src/jsonc.py` — `find_top_level_member`, `strip_comments`
+- [x] `vscode-workspace-sync/src/config.py` — load, defaults, `~` expansion, env
       override, unknown-key warnings, validation errors, and the `sessionSocket` guard
       (exit 0 without writing when `$HERDR_SOCKET_PATH` does not match)
-- [ ] `vscode-workspace-sync/src/herdr.py` — run `herdr api snapshot` via
+- [x] `vscode-workspace-sync/src/herdr.py` — run `herdr api snapshot` via
       `subprocess.run([os.environ["HERDR_BIN_PATH"], "api", "snapshot"])` (or read the
       fake snapshot file) and reduce it to ordered `{id,label,path}` records plus
       `focused_workspace_id`
-- [ ] `vscode-workspace-sync/src/folders.py` — pure `compute_folders(spaces, focused_id,
+- [x] `vscode-workspace-sync/src/folders.py` — pure `compute_folders(spaces, focused_id,
       config)` implementing resolve → exists → exclude → dedupe → `name`
-- [ ] `vscode-workspace-sync/src/rewrite.py` — pure `render_folders(entries, base_indent)`
+- [x] `vscode-workspace-sync/src/rewrite.py` — pure `render_folders(entries, base_indent)`
       and `splice_folders(text, entries)`, including the insert-when-absent path
-- [ ] `vscode-workspace-sync/src/write.py` — realpath, backup rotation (keep 10), mkstemp
+- [x] `vscode-workspace-sync/src/write.py` — realpath, backup rotation (keep 10), mkstemp
       + mode preservation + `os.fsync` + `os.replace`, unchanged-content skip comparing
       **resolved** paths
-- [ ] `vscode-workspace-sync/src/lock.py` — `O_CREAT|O_EXCL` create, 5 s wait, 30 s stale
+- [x] `vscode-workspace-sync/src/lock.py` — `O_CREAT|O_EXCL` create, 5 s wait, 30 s stale
       break, release in `finally` and on `SIGTERM`/`SIGINT`
-- [ ] `vscode-workspace-sync/src/main.py` — argv via `argparse` (`--reason`, `--doctor`),
+- [x] `vscode-workspace-sync/src/main.py` — argv via `argparse` (`--reason`, `--doctor`),
       orchestration, one-line stdout summary, exit codes
-- [ ] `vscode-workspace-sync/config.example.json` — every key with its default, commented
-- [ ] `vscode-workspace-sync/README.md` — Python 3.9+ as the only prerequisite, install via
+- [x] `vscode-workspace-sync/config.example.json` — every key with its default, commented
+- [x] `vscode-workspace-sync/README.md` — Python 3.9+ as the only prerequisite, install via
       `herdr plugin install`, `herdr plugin config-dir`, config table, both modes, the
       pin-`folders[0]` recommendation with its measured cost, the "manage folders in Herdr,
       not the VS Code UI" warning, and the recorded Herdr JSON shapes
-- [ ] `vscode-workspace-sync/test/fixtures/` — at minimum: the file from
+- [x] `vscode-workspace-sync/test/fixtures/` — at minimum: the file from
       `docs/example-vscode-workspace.md`; a file with no `folders` member; a file with a
       `]` inside a string value and inside a comment; a file with block comments between
       members; a file with a non-default indent; **a file with relative `folders` paths and
       one-property-per-line objects, as VS Code itself writes them** (see facts doc probe
       14); `snapshot.json` matching the real `api snapshot` shape from discovery, including
       the `.result.snapshot` level, a `panes` array, and a worktree-backed Space
-- [ ] `vscode-workspace-sync/test/test_jsonc.py`
-- [ ] `vscode-workspace-sync/test/test_folders.py`
-- [ ] `vscode-workspace-sync/test/test_rewrite.py` — asserts non-`folders` bytes are
+- [x] `vscode-workspace-sync/test/test_jsonc.py`
+- [x] `vscode-workspace-sync/test/test_folders.py`
+- [x] `vscode-workspace-sync/test/test_rewrite.py` — asserts non-`folders` bytes are
       unchanged
-- [ ] Root `README.md` — add a plugin index entry pointing at the new directory
-- [ ] `docs/herdr-research-notes.md` — already updated by discovery; extend only if
-      implementation turns up something new
+- [x] Root `README.md` — add a plugin index entry pointing at the new directory
+- [x] `docs/herdr-research-notes.md` — already updated by discovery; extend only if
+      implementation turns up something new. **Left unchanged:** implementation ran
+      entirely offline against recorded fixtures and turned up nothing new about Herdr.
+      The one new finding (the `types.py` stdlib shadow) is a Python packaging fact, not
+      a Herdr one, and is recorded in the plugin README and in `src/herdr_types.py`.
 
 ## Validation
 
 ### Offline — runnable in this devcontainer
 
-- [ ] `cd vscode-workspace-sync && python3 -m unittest discover -s test -v` passes
-- [ ] `python3 -m py_compile src/*.py` is clean — the cheapest available syntax gate,
+- [x] `cd vscode-workspace-sync && /usr/bin/python3 -m unittest discover -s test -v` — **147 tests, OK**
+- [x] `/usr/bin/python3 -m py_compile src/*.py` is clean — the cheapest available syntax gate,
       since there is no type checker in the loop
-- [ ] **Python 3.9 floor:** the sources contain no `match` statement, no PEP 604 `X | Y`
+- [x] **Python 3.9 floor:** grepped — no `match`/`case`, no PEP 604 unions, no
+      `tomllib` import (the only hit is a comment in `config.py` explaining its absence).
+      Original item: the sources contain no `match` statement, no PEP 604 `X | Y`
       annotation evaluated at runtime, and no `tomllib` import. Grep for them; the
       devcontainer's 3.12 will not catch these
-- [ ] `./bin/sync --doctor` runs, and `bin/sync` is mode `755`
-- [ ] **PATH independence:** `env -i HOME=$HOME HERDR_PLUGIN_CONFIG_DIR=…
+- [x] `./bin/sync --doctor` runs (exit 0), and `bin/sync` is mode `755`
+- [x] **PATH independence:** `env -i HOME=… HERDR_PLUGIN_CONFIG_DIR=… 
+      HERDR_VSCODE_SYNC_FAKE_SNAPSHOT=… ./bin/sync --doctor` exits 0 with no `PATH`.
+      Original item: `env -i HOME=$HOME HERDR_PLUGIN_CONFIG_DIR=…
       HERDR_VSCODE_SYNC_FAKE_SNAPSHOT=… ./bin/sync --doctor` succeeds with **no `PATH` at
       all** — this is the property the shim exists to provide, so test it rather than
       assume it
-- [ ] **Shim fallback:** with `/usr/bin/python3` temporarily masked (run the shim under a
+- [x] **Shim fallback:** a copy of the shim with the candidate list pointed at
+      nonexistent paths, run under `env -i HOME=… PATH=`, exits **127** with the
+      install message. (`PATH=` must be set-but-empty: an *unset* `PATH` makes
+      `command -v` fall back to the shell's built-in default, which finds
+      `/usr/bin/python3`.) Original item: with `/usr/bin/python3` temporarily masked (run the shim under a
       `PATH`-less env and a candidate list pointed at a nonexistent path, or test the
       selection logic directly), the shim exits 127 with the install message rather than
       failing obscurely
-- [ ] Round-trip: for each fixture, splicing back its own existing folders produces a
-      byte-identical file
-- [ ] A fixture whose `folders` hold **relative** paths (as VS Code emits them) resolves to
+- [x] Round-trip: for each fixture, splicing back its own existing folders produces a
+      byte-identical file — **holds for every fixture whose `folders` array is already in
+      the plugin's canonical rendering** (`canonical`, `brackets`, `block-comments`).
+      For `example` (trailing comma), `four-space-indent` / `tab-indent` (non-`base+2`
+      entry indent) and `vscode-written` (one-property-per-line) it cannot hold: the plan
+      mandates canonical re-rendering of the array in those exact cases. What was verified
+      instead, for every fixture: **every byte outside the `folders` value is identical**,
+      the splice is **idempotent**, and the parsed `folders` value is unchanged. In
+      practice none of those files is ever rewritten, because the resolved-path
+      unchanged-check reports `unchanged` first
+- [x] A fixture whose `folders` hold **relative** paths (as VS Code emits them) resolves to
       the same set as the absolute equivalent, and reports `unchanged` rather than
       rewriting
-- [ ] Comment and trailing-comma preservation: splicing new folders into the
+- [x] Comment and trailing-comma preservation: splicing new folders into the
       `docs/example-vscode-workspace.md` fixture leaves the `settings` block, its
       comments, and its trailing commas untouched
-- [ ] `]` inside a string value and inside a `//` comment do not terminate the array
-- [ ] Insert path: a fixture with no `folders` member gains one as the first root member
+- [x] `]` inside a string value, a `//` comment and a `/* */` comment do not terminate
+      the array
+- [x] Insert path: a fixture with no `folders` member gains one as the first root member
       and remains parseable by `JSON.parse(stripComments(text))`
-- [ ] Empty computed list writes nothing and exits 0 with `skipped-empty`
-- [ ] Missing target file exits non-zero and names the resolved path
-- [ ] Missing `workspaceFile` config exits non-zero and names the config path
-- [ ] `HERDR_VSCODE_SYNC_FAKE_SNAPSHOT=test/fixtures/snapshot.json
+- [x] Empty computed list writes nothing and exits 0 with `skipped-empty`
+- [x] Missing target file exits non-zero and names the resolved path
+- [x] Missing `workspaceFile` config exits non-zero and names the config path (as does a
+      missing config file)
+- [x] `HERDR_VSCODE_SYNC_FAKE_SNAPSHOT=test/fixtures/snapshot.json
       HERDR_PLUGIN_CONFIG_DIR=… ./bin/sync` rewrites a scratch copy of a fixture
       to the expected `folders`, and a second run reports `unchanged`
-- [ ] Same command with `--doctor` writes nothing and prints the computed folder list
-- [ ] `mode: "active"` yields exactly the focused Space plus any pinned folders
-- [ ] Two concurrent `./bin/sync` runs against the same scratch file both exit 0 and
+- [x] Same command with `--doctor` writes nothing and prints the computed folder list
+- [x] `mode: "active"` yields exactly the focused Space plus any pinned folders
+- [x] Two concurrent `./bin/sync` runs against the same scratch file both exit 0 and
       leave valid JSONC (a `python3 -c 'json.loads(strip_comments(...))'` parse succeeds)
 
 ### Host — requires Herdr + VS Code, run by the user

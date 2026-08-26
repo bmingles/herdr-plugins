@@ -1,0 +1,102 @@
+{
+  "id": "cli:api:snapshot",
+  "result": {
+    "type": "session_snapshot",
+    "snapshot": {
+      "version": "0.8.0",
+      "protocol": 19,
+      "focused_workspace_id": "w4",
+      "focused_tab_id": "w4:t3",
+      "focused_pane_id": "w4:pC",
+      "agents": {},
+      "layouts": {},
+      "tabs": [
+        {"tab_id": "w1:t1", "workspace_id": "w1", "label": "1", "number": 1},
+        {"tab_id": "w4:t1", "workspace_id": "w4", "label": "1", "number": 1},
+        {"tab_id": "w4:t3", "workspace_id": "w4", "label": "2", "number": 3},
+        {"tab_id": "w6:t1", "workspace_id": "w6", "label": "1", "number": 1},
+        {"tab_id": "w5:t1", "workspace_id": "w5", "label": "1", "number": 1},
+        {"tab_id": "w7:t1", "workspace_id": "w7", "label": "1", "number": 1}
+      ],
+      "workspaces": [
+        {
+          "workspace_id": "w1", "number": 1, "label": "devc-wksp", "focused": false,
+          "active_tab_id": "w1:t1", "pane_count": 1, "tab_count": 1,
+          "agent_status": "unknown"
+        },
+        {
+          "workspace_id": "w4", "number": 2, "label": "herdr-plugins", "focused": true,
+          "active_tab_id": "w4:t3", "pane_count": 2, "tab_count": 2,
+          "agent_status": "working",
+          "worktree": {
+            "repo_key": "/Users/bingles/code/tools/herdr-plugins/.git",
+            "repo_name": "herdr-plugins",
+            "repo_root": "/Users/bingles/code/tools/herdr-plugins",
+            "checkout_path": "/Users/bingles/code/tools/herdr-plugins",
+            "is_linked_worktree": false
+          }
+        },
+        {
+          "workspace_id": "w6", "number": 3, "label": "renamed", "focused": false,
+          "active_tab_id": "w6:t1", "pane_count": 1, "tab_count": 1,
+          "agent_status": "unknown"
+        },
+        {
+          "workspace_id": "w5", "number": 4, "label": "devc-wksp", "focused": false,
+          "active_tab_id": "w5:t1", "pane_count": 1, "tab_count": 1,
+          "agent_status": "unknown"
+        },
+        {
+          "workspace_id": "w7", "number": 5, "label": "probe-x", "focused": false,
+          "active_tab_id": "w7:t1", "pane_count": 1, "tab_count": 1,
+          "agent_status": "unknown",
+          "worktree": {
+            "repo_key": "/Users/bingles/code/tools/herdr-plugins/.git",
+            "repo_name": "herdr-plugins",
+            "repo_root": "/Users/bingles/code/tools/herdr-plugins",
+            "checkout_path": "/Users/bingles/.herdr/worktrees/herdr-plugins/probe-x",
+            "is_linked_worktree": true
+          }
+        }
+      ],
+      "panes": [
+        {
+          "pane_id": "w1:p1", "workspace_id": "w1", "tab_id": "w1:t1",
+          "cwd": "/Users/bingles/code/spikes/devc-wksp",
+          "foreground_cwd": "/Users/bingles/code/spikes/devc-wksp",
+          "focused": false, "agent_status": "unknown"
+        },
+        {
+          "pane_id": "w4:p1", "workspace_id": "w4", "tab_id": "w4:t1",
+          "cwd": "/Users/bingles/code/tools/herdr-plugins/docs",
+          "foreground_cwd": "/Users/bingles/code/tools/herdr-plugins/docs",
+          "focused": false, "agent_status": "idle", "agent": "claude"
+        },
+        {
+          "pane_id": "w4:pC", "workspace_id": "w4", "tab_id": "w4:t3",
+          "cwd": "/Users/bingles/code/tools/herdr-plugins",
+          "foreground_cwd": "/Users/bingles/code/tools/herdr-plugins",
+          "focused": true, "agent_status": "working", "agent": "claude"
+        },
+        {
+          "pane_id": "w6:p1", "workspace_id": "w6", "tab_id": "w6:t1",
+          "cwd": "/Users/bingles/code/tools/herdr-plugins",
+          "foreground_cwd": "/Users/bingles/code/tools/herdr-plugins",
+          "focused": false, "agent_status": "unknown"
+        },
+        {
+          "pane_id": "w5:p1", "workspace_id": "w5", "tab_id": "w5:t1",
+          "cwd": "/Users/bingles/code/spikes/devc-wksp",
+          "foreground_cwd": "/Users/bingles/code/spikes/devc-wksp",
+          "focused": false, "agent_status": "unknown"
+        },
+        {
+          "pane_id": "w7:p1", "workspace_id": "w7", "tab_id": "w7:t1",
+          "cwd": "/Users/bingles/.herdr/worktrees/herdr-plugins/probe-x",
+          "foreground_cwd": "/Users/bingles/.herdr/worktrees/herdr-plugins/probe-x",
+          "focused": false, "agent_status": "unknown"
+        }
+      ]
+    }
+  }
+}

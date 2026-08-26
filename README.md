@@ -1,0 +1,45 @@
+# herdr-plugins
+
+Plugins and research notes for [Herdr](https://herdr.dev), a terminal multiplexer for
+coding agents.
+
+## Plugins
+
+| Plugin | What it does |
+| --- | --- |
+| [`vscode-workspace-sync/`](vscode-workspace-sync/) | Keeps the `folders` array of a VS Code multi-root `.code-workspace` file in sync with your Herdr Spaces — create, close, rename or reorder a Space and the VS Code explorer follows, with no window reload. Python 3.9+, standard library only, no build step. |
+
+Install a plugin straight from this repo:
+
+```sh
+herdr plugin install <owner>/herdr-plugins/vscode-workspace-sync
+```
+
+Or link a working tree while developing:
+
+```sh
+herdr plugin link ./vscode-workspace-sync
+herdr plugin log list --plugin vscode-workspace-sync --limit 5
+```
+
+Each plugin directory has its own README with configuration and diagnostics.
+
+## Docs
+
+| Document | Contents |
+| --- | --- |
+| [`docs/herdr-research-notes.md`](docs/herdr-research-notes.md) | How Herdr's plugin system, socket API and agent detection actually behave, established largely by experiment. |
+| [`docs/herdr-vscode-sync-facts.md`](docs/herdr-vscode-sync-facts.md) | Pasted host output from the discovery run behind `vscode-workspace-sync`: `api snapshot` shapes, which plugin event hooks fire, the server environment, and VS Code's folder live-reload behaviour. |
+| [`docs/example-vscode-workspace.md`](docs/example-vscode-workspace.md) | A representative `.code-workspace` file, and the primary test fixture for `vscode-workspace-sync`. |
+
+## Skills
+
+`.claude/skills/` holds the agent-facing distillations of the above:
+`herdr-plugin-authoring` (manifest, plugin environment, socket API) and
+`herdr-devcontainer-agent-running` (surfacing a containerised agent's status via
+`HERDR_AGENT`).
+
+## Plans
+
+`.plans/` tracks in-flight and completed work; `.plans/PLAN.md` is the index and the
+source of truth for status.

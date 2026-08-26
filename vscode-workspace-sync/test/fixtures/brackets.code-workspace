@@ -1,0 +1,15 @@
+{
+  // A ] in a line comment must not terminate the array. Nor must } or a "quote.
+  "folders": [
+    { "path": "/Users/jdoe/one" },
+    { "path": "/Users/jdoe/two" }
+  ],
+  "settings": {
+    "search.exclude": "a]b[c}d{e",
+    "window.title": "brackets ] and ] again",
+    /* a block comment with ] and } and "folders": [ inside it */
+    "files.associations": {
+      "*.weird": "json"
+    }
+  }
+}

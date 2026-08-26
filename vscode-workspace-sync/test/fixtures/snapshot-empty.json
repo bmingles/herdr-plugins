@@ -1,0 +1,14 @@
+{
+  "id": "cli:api:snapshot",
+  "result": {
+    "type": "session_snapshot",
+    "snapshot": {
+      "version": "0.8.0",
+      "protocol": 19,
+      "focused_workspace_id": null,
+      "workspaces": [],
+      "panes": [],
+      "tabs": [], "layouts": [], "agents": []
+    }
+  }
+}

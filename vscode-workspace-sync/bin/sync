@@ -1,0 +1,9 @@
+#!/bin/sh
+# bin/sync — locate a Python 3 without trusting PATH, then exec the real entrypoint.
+for py in /usr/bin/python3 /opt/homebrew/bin/python3 /usr/local/bin/python3; do
+    [ -x "$py" ] && exec "$py" "$(dirname "$0")/../src/main.py" "$@"
+done
+py=$(command -v python3 2>/dev/null) && exec "$py" "$(dirname "$0")/../src/main.py" "$@"
+echo "herdr-vscode-sync: no python3 found. Install Xcode Command Line Tools" >&2
+echo "  (xcode-select --install) or Homebrew Python (brew install python)." >&2
+exit 127
