@@ -190,6 +190,49 @@ Example event payload:
 Prefer invoking `$HERDR_BIN_PATH` (the CLI) over raw sockets for portability;
 Windows uses a different local socket form.
 
+### Hook invocation semantics
+
+Observed on 0.8.0 by running a probe plugin against a live host server (see
+`herdr-vscode-sync-facts.md` for the raw output).
+
+- **cwd is the plugin root**, for event hooks and actions alike. A plugin-root-relative
+  `command = ["./bin/thing"]` spawns correctly — which is what makes a compiled-binary
+  entrypoint viable.
+- **The server's `PATH` is inherited from whatever launched the server**, not synthesised.
+  A server started from a VS Code integrated terminal carried the full interactive `PATH`
+  (duplicated entries and VS Code `globalStorage` paths gave it away) and `deno`, `node`,
+  and `git` all resolved. Under launchd it would carry something else. Treat the server's
+  `PATH` as **unknowable** rather than assuming either extreme: reach Herdr through
+  `$HERDR_BIN_PATH`, and ship anything else self-contained.
+- **`HERDR_PLUGIN_EVENT` is the dotted name** (`workspace.created`); the `event` field
+  *inside* `HERDR_PLUGIN_EVENT_JSON` is the **underscored** name (`workspace_created`).
+  Both spellings are live at once.
+- **`HERDR_PLUGIN_CONTEXT_JSON` describes the event's subject, not the focused UI.** A
+  workspace created with `--no-focus` still appeared as context `workspace_id` while a
+  different workspace held focus. Do not read it as "what the user is looking at".
+  It carries `workspace_cwd` (a stable workspace root, unlike pane `cwd`, which drifts as
+  the user `cd`s) and a `worktree` object when applicable. Fields are **omitted, not
+  nulled**, when unavailable. On a *destructive* event such as `workspace.closed` the
+  path fields are simply gone.
+- `invocation_source` distinguishes `cli` (action) / `api` (event) / `startup`;
+  `correlation_id` is the event name for events, `cli:plugin` for CLI actions, and
+  `plugin.startup` for startup.
+- **`[[startup]]` runs on server boot, not on `plugin link`.** On that invocation
+  `HERDR_PLUGIN_EVENT` is the bare string `startup` and **`HERDR_PLUGIN_EVENT_JSON` is
+  unset** — a hook that parses it unconditionally dies exactly when it matters. Startup
+  fires before the session's first `workspace.focused`, and the session's *initial*
+  workspace emits **no** `workspace.created`.
+- **Event hooks fire with no client attached.** Hooks are server-side; detaching
+  (`ctrl+b q`) leaves the server running and events keep dispatching.
+- **Plugin registration is global, not per session.** `~/.config/herdr/plugins.json` is
+  not session-scoped, so a single `plugin link` runs the plugin in **every** session's
+  server. Any plugin that writes to a shared external resource needs to guard on
+  `$HERDR_SOCKET_PATH`, or two sessions will fight. `plugin log list` is per-server, so a
+  plugin wanting one audit trail should also append to a file under
+  `$HERDR_PLUGIN_STATE_DIR`, which *is* shared.
+- Omitting `platforms` links fine but emits
+  `manifest does not declare platforms; platform support unknown`.
+
 ---
 
 ## Socket API
@@ -209,6 +252,64 @@ match (19 match forms). Agent-relevant: `pane.agent_status_changed`,
 
 Agent status enum: `idle | working | blocked | done | unknown`. `done` is idle whose
 tab has not been seen in the focused UI; CLI reads do not mark a tab seen.
+
+### `api snapshot` and workspace state
+
+`herdr api snapshot` exists at **0.8.0** (not 0.8.2-only) and is the one-call read of
+whole-session state. Envelope has three levels — the `snapshot` object is easy to miss:
+
+```jsonc
+{ "id": "cli:api:snapshot",
+  "result": { "type": "session_snapshot",
+    "snapshot": { "version": "0.8.0", "protocol": 19,
+      "focused_workspace_id": "w4", "focused_tab_id": "w4:t3", "focused_pane_id": "w4:pC",
+      "workspaces": [...], "tabs": [...], "panes": [...], "agents": ..., "layouts": ... } } }
+```
+
+- **Workspace records carry no `cwd`.** Fields are `workspace_id`, `label`, `number`,
+  `focused`, `active_tab_id`, `pane_count`, `tab_count`, `agent_status`, plus a
+  `worktree` object `{repo_key, repo_name, repo_root, checkout_path, is_linked_worktree}`
+  *when one has been attached*. **A directory path must come from `panes[].cwd`**, joined
+  on `workspace_id`.
+- **`worktree` metadata attaches lazily.** A workspace opened at a git repo root had no
+  `worktree` object until an unrelated `herdr worktree create` triggered a repo scan — at
+  which point Herdr emitted `workspace.updated` for it. Never treat
+  `worktree.checkout_path` as a reliable path source.
+- **Array order is sidebar order**, and `number` is a 1-based sidebar position that
+  re-sequences on reorder. `herdr workspace list` returns the same records under
+  `.result.workspaces` with no `snapshot` level, in the same order.
+- **A workspace's `label` is auto-derived from its directory basename** when created
+  without `--label`; it is never empty or null, and labels are **not unique** — two
+  workspaces held `devc-wksp` simultaneously.
+
+Reordering has no CLI at 0.8.0 but two socket methods, which are what a sidebar drag
+calls: `workspace.move` `{workspace_id, insert_index}` and `workspace.move_block`
+`{workspace_ids[], before_workspace_id|null}`.
+
+### Workspace event payload shapes
+
+All seven fire on 0.8.0, and `herdr plugin link` accepts all seven names. Payload
+richness varies a lot, which matters for anyone hoping to avoid a snapshot call:
+
+| Event | Payload carries | Triggered by |
+|---|---|---|
+| `workspace.created` | full record (no `cwd`) | `workspace create`, `worktree create` |
+| `workspace.closed` | `workspace_id` + the record as it was | `workspace close` |
+| `workspace.renamed` | `workspace_id`, `label` only | `workspace rename` |
+| `workspace.focused` | `workspace_id` only | `workspace focus`; re-emitted after a move |
+| `workspace.updated` | full record | worktree metadata being attached |
+| `workspace.moved` | `workspace_id`, `insert_index`, **the whole ordered array** | `workspace.move` |
+| `workspace.reordered` | `workspace_ids[]`, **the whole ordered array** | `workspace.move_block` |
+
+**No workspace event payload carries `cwd`**, so anything path-shaped still needs
+`api snapshot` (or context's `workspace_cwd`). One user gesture can produce two hook
+runs — a move re-emits `workspace.focused`, and `worktree create` emits
+`workspace.updated` + `workspace.created` — so event handlers should be idempotent rather
+than counting invocations.
+
+`workspace.metadata_updated` also exists (`workspace.report_metadata`,
+`{workspace_id, source, tokens, seq?, ttl_ms?}` with a ≤16-key token map) and is
+display-only badge state.
 
 ### State reporting — and its authority semantics
 
@@ -294,3 +395,17 @@ Herdr 0.8.0 (protocol 19) client and server, macOS arm64, Docker Desktop
 (`desktop-linux`, linux/arm64 containers), VS Code devcontainer running Claude Code
 2.1.245 as user `vscode` at `/workspaces/herdr-plugins`. Release binaries verified
 against the sha256 values in `https://herdr.dev/latest.json`.
+
+A second pass on **2026-08-26** ran on the macOS **host** rather than in the
+devcontainer — Herdr 0.8.0 / protocol 19, VS Code 1.134.0, Deno 2.9.5, git 2.52.0 — to
+observe plugin hook delivery and workspace JSON against a live server. Details in
+[`herdr-vscode-sync-facts.md`](herdr-vscode-sync-facts.md).
+
+Worth knowing for anyone probing on a host: **the Herdr server is often a child of a VS
+Code integrated terminal**, so its process tree runs `herdr → bash → Code Helper
+(pty-host) → Code`. Anything that would reload that VS Code window, or `herdr server
+stop`, kills every pane including the one doing the probing. To exercise server-boot or
+detached behaviour safely, start a **second named session** instead
+(`env -u HERDR_ENV herdr --session probe`; nested herdr is refused unless
+`allow_nested = true` or `HERDR_ENV` is unset), probe it via
+`HERDR_SOCKET_PATH=…/sessions/probe/herdr.sock`, then `herdr session stop|delete probe`.
