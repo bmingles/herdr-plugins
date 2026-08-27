@@ -32,7 +32,9 @@ def wait_for(predicate, timeout=10.0, interval=0.02):
     return None
 
 
-class DaemonE2ETest(TempDirCase):
+class DaemonHarness(TempDirCase):
+    """Fixtures only -- fake server, fake inhibitor, daemon plumbing."""
+
     def setUp(self):
         super().setUp()
         self.sock_path = self.path("herdr.sock")
@@ -94,7 +96,9 @@ class DaemonE2ETest(TempDirCase):
     def count(self, prefix):
         return len([l for l in self.lines() if l.startswith(prefix)])
 
-    # -- the core behaviour ------------------------------------------------------
+
+class DaemonE2ETest(DaemonHarness):
+    # -- the core behaviour --------------------------------------------------
 
     def test_holds_while_working_and_releases_after_the_grace(self):
         self.start_daemon()
@@ -259,3 +263,116 @@ class DaemonE2ETest(TempDirCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WedgedDaemonTakeoverTest(DaemonHarness):
+    """A daemon that is alive but not progressing must not block its own replacement.
+
+    On a Herdr restart the startup hook runs, finds the lock held, and would otherwise
+    exit silently -- leaving the new server with no daemon at all, forever, because the
+    session key is derived from the socket path and so collides with the wedged one.
+    """
+
+    def wedge(self, updated_at=None):
+        """Start a process that holds the session lock and never reports progress."""
+        import daemonize
+        key = daemonize.session_key(self.sock_path)
+        session_dir = self.path("state", key)
+        os.makedirs(session_dir, exist_ok=True)
+        script = (
+            "import fcntl, os, sys, time\n"
+            "fd = os.open(sys.argv[1], os.O_RDWR | os.O_CREAT, 0o644)\n"
+            "fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)\n"
+            "os.ftruncate(fd, 0); os.write(fd, str(os.getpid()).encode())\n"
+            "sys.stdout.write('locked\\n'); sys.stdout.flush()\n"
+            "time.sleep(600)\n")
+        proc = subprocess.Popen([sys.executable, "-c", script,
+                                 os.path.join(session_dir, "daemon.lock")],
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        self.procs.append(proc)
+        self.assertEqual(proc.stdout.readline().strip(), b"locked")
+        if updated_at is not None:
+            with open(os.path.join(session_dir, "daemon.json"), "w") as fh:
+                json.dump({"pid": proc.pid, "updated_at": updated_at,
+                           "holding": False}, fh)
+        return proc
+
+    def test_a_wedged_daemon_is_displaced(self):
+        wedged = self.wedge(updated_at=time.time() - 3600)   # an hour behind
+        self.start_daemon()
+        self.server.set_statuses({"w1:p1": "working"})
+        self.assertTrue(wait_for(lambda: self.count("START") == 1, timeout=25),
+                        "the replacement daemon never took over")
+        self.assertIsNotNone(wedged.poll(), "the wedged daemon was left running")
+
+    def test_a_healthy_daemon_is_never_displaced(self):
+        """The dangerous false positive: killing a daemon that is working fine."""
+        self.start_daemon()
+        self.server.set_statuses({"w1:p1": "working"})
+        self.assertTrue(wait_for(lambda: self.count("START") == 1))
+        first = self.procs[0]
+
+        second = subprocess.run(
+            [sys.executable, os.path.join(_support.ROOT, "src", "main.py"),
+             "daemon", "--foreground"],
+            env=self.env(), capture_output=True, text=True, timeout=30)
+        self.assertEqual(second.returncode, 0)
+        self.assertIn("already running", second.stderr)
+        self.assertIsNone(first.poll(), "a healthy daemon was killed")
+        self.assertEqual(self.count("START"), 1)
+
+    def test_a_holder_that_recovers_during_the_confirm_is_left_alone(self):
+        """A machine waking from sleep leaves a stale file and then catches up."""
+        import daemonize
+        key = daemonize.session_key(self.sock_path)
+        session_dir = self.path("state", key)
+        wedged = self.wedge(updated_at=time.time() - 3600)
+
+        def revive():
+            time.sleep(1.0)
+            with open(os.path.join(session_dir, "daemon.json"), "w") as fh:
+                json.dump({"pid": wedged.pid, "updated_at": time.time(),
+                           "holding": False}, fh)
+
+        import threading
+        threading.Thread(target=revive, daemon=True).start()
+
+        result = subprocess.run(
+            [sys.executable, os.path.join(_support.ROOT, "src", "main.py"),
+             "daemon", "--foreground"],
+            env=self.env(HERDR_CAFFEINATE_POLL_INTERVAL_SEC="1"),
+            capture_output=True, text=True, timeout=40)
+        self.assertEqual(result.returncode, 0)
+        self.assertIsNone(wedged.poll(), "a daemon that caught up was killed anyway")
+        self.assertIn("recovered on its own", result.stderr)
+
+    def test_no_status_file_means_no_takeover(self):
+        """Never displace a holder we know nothing about."""
+        wedged = self.wedge(updated_at=None)      # lock held, no daemon.json at all
+        result = subprocess.run(
+            [sys.executable, os.path.join(_support.ROOT, "src", "main.py"),
+             "daemon", "--foreground"],
+            env=self.env(), capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("already running", result.stderr)
+        self.assertIsNone(wedged.poll())
+
+    def test_takeover_reaps_the_wedged_daemons_inhibitor(self):
+        """A displaced daemon's caffeinate must not survive it."""
+        import daemonize
+        key = daemonize.session_key(self.sock_path)
+        session_dir = self.path("state", key)
+        os.makedirs(session_dir, exist_ok=True)
+
+        orphan = subprocess.Popen([FAKE_CAFFEINATE], env=self.env(),
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                  start_new_session=True)
+        self.procs.append(orphan)
+        with open(os.path.join(session_dir, "inhibitor.json"), "w") as fh:
+            json.dump({"pid": orphan.pid, "argv": [FAKE_CAFFEINATE], "at": time.time()},
+                      fh)
+        self.wedge(updated_at=time.time() - 3600)
+
+        self.start_daemon()
+        self.assertTrue(wait_for(lambda: orphan.poll() is not None, timeout=25),
+                        "the displaced daemon's inhibitor was left holding")

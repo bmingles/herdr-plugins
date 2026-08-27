@@ -123,6 +123,71 @@ def run_loop(cfg, socket_path, paths, log, stop_flag):
     return code
 
 
+def _staleness_bounds(cfg):
+    """How old a status file must be before its owner is presumed wedged.
+
+    Generous on purpose. The daemon rewrites `daemon.json` every poll, so a healthy one
+    is never more than one interval behind; anything beyond several intervals is either
+    wedged or stopped. The floor keeps a very short `pollIntervalSec` from making the
+    check trigger-happy.
+    """
+    stale_after = max(15.0, cfg.poll_interval_sec * 5)
+    confirm_delay = max(3.0, cfg.poll_interval_sec * 2)
+    return stale_after, confirm_delay
+
+
+def _holder_age(paths):
+    """Seconds since the lock holder last reported progress, or None if unknowable."""
+    state = _read_status(paths)
+    if not state or not isinstance(state.get("updated_at"), (int, float)):
+        return None
+    return time.time() - state["updated_at"]
+
+
+def _take_over(paths, cfg, log, lock):
+    """Displace a wedged daemon and claim its lock. True if we now hold it.
+
+    Confirms before acting: a laptop that slept leaves a status file hours old, and the
+    holder will refresh it within a poll of waking. Killing a daemon that is merely
+    catching up would be worse than the problem being solved, so we look twice.
+    """
+    stale_after, confirm_delay = _staleness_bounds(cfg)
+    holder = daemonize.read_holder_pid(paths.lock)
+    log.warn("lock held by pid %s whose status is %.0fs stale; confirming before "
+             "taking over" % (holder, _holder_age(paths) or -1))
+
+    deadline = time.time() + confirm_delay
+    while time.time() < deadline:
+        time.sleep(0.2)
+        age = _holder_age(paths)
+        if age is not None and age < stale_after:
+            log.info("pid %s recovered on its own; leaving it alone" % holder)
+            return False
+
+    if not holder or not daemonize.pid_alive(holder):
+        # It died while we were looking; the lock is free for the taking.
+        log.info("previous holder is gone; claiming the lock")
+        return lock.acquire()
+
+    log.warn("taking over from wedged daemon pid %d" % holder)
+    for signum in (signal.SIGTERM, signal.SIGKILL):
+        try:
+            os.kill(holder, signum)
+        except OSError as exc:
+            log.warn("could not signal pid %d: %s" % (holder, exc))
+        grace = time.time() + (5.0 if signum == signal.SIGTERM else 2.0)
+        while time.time() < grace:
+            if lock.acquire():
+                log.warn("took over from pid %d (killed with %s); its inhibitor will "
+                         "be reaped" % (holder, "SIGTERM" if signum == signal.SIGTERM
+                                        else "SIGKILL"))
+                return True
+            time.sleep(0.1)
+
+    log.error("could not take the lock from pid %d; giving up" % holder)
+    return False
+
+
 def cmd_daemon(args):
     try:
         cfg, socket_path, paths = _resolve()
@@ -134,12 +199,20 @@ def cmd_daemon(args):
         _stop_running(paths, quiet=True)
 
     lock = daemonize.Lock(paths.lock)
+    stale_after, _confirm = _staleness_bounds(cfg)
+    taking_over = False
     if not lock.acquire():
-        if not args.ensure:
-            holder = daemonize.read_holder_pid(paths.lock)
-            sys.stderr.write("agent-caffeinate: already running%s\n"
-                             % (" (pid %d)" % holder if holder else ""))
-        return EXIT_OK
+        age = _holder_age(paths)
+        if age is None or age < stale_after:
+            # Someone healthy owns this session. Nothing to do.
+            if not args.ensure:
+                holder = daemonize.read_holder_pid(paths.lock)
+                sys.stderr.write("agent-caffeinate: already running%s\n"
+                                 % (" (pid %d)" % holder if holder else ""))
+            return EXIT_OK
+        # The holder has stopped reporting progress. Detach first so the plugin hook
+        # returns immediately, then confirm and displace it from the background.
+        taking_over = True
 
     if not socket_path:
         lock.release()
@@ -149,9 +222,13 @@ def cmd_daemon(args):
 
     if not args.foreground:
         daemonize.detach(paths.log)
-    lock.write_pid()
 
     log = daemonize.Log(paths.log, cfg.log_level, echo=args.foreground)
+
+    if taking_over and not _take_over(paths, cfg, log, lock):
+        return EXIT_OK
+
+    lock.write_pid()
     for warning in cfg.warnings:
         log.warn(warning)
 
@@ -295,6 +372,22 @@ def cmd_doctor(_args):
     out.write("  session key       : %s\n" % daemonize.session_key(socket_path))
     out.write("  session dir       : %s\n" % paths.session_dir)
     out.write("  log               : %s\n" % paths.log)
+
+    holder = daemonize.read_holder_pid(paths.lock)
+    if holder and daemonize.pid_alive(holder):
+        age = _holder_age(paths)
+        stale_after, _confirm = _staleness_bounds(cfg)
+        if age is None:
+            out.write("  daemon            : pid %d holds the lock but reports no "
+                      "status\n" % holder)
+        elif age >= stale_after:
+            out.write("  daemon            : pid %d is WEDGED (last progress %.0fs "
+                      "ago); the next start will take over\n" % (holder, age))
+        else:
+            out.write("  daemon            : running (pid %d, last progress %.0fs "
+                      "ago)\n" % (holder, age))
+    else:
+        out.write("  daemon            : not running\n")
 
     if socket_path:
         try:

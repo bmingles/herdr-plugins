@@ -7,6 +7,12 @@ beside it; completed plans move to `.plans/archived/`.
 
 ### Pending
 
+- [caffeinate-grace-tuning](caffeinate-grace-tuning.md) — decide `agent-caffeinate`'s
+  default `idleGraceSec` (currently 60; is 30 safe?) from a day of debug logs rather than
+  judgement. **Written to be picked up cold** — it carries the log format, the analysis
+  commands, the classification that avoids relying on anyone's memory, and the decision
+  rule. Blocked only on the user running the plugin for a day at `"logLevel": "debug"`.
+
 - [herdr-daemon-discovery](herdr-daemon-discovery.md) — host probes answering the
   unknowns both new plugins depend on: does a daemon spawned from `[[startup]]` survive,
   what does a long-lived `events.subscribe` connection actually look like, and what
@@ -56,3 +62,4 @@ beside it; completed plans move to `.plans/archived/`.
 | 3 | [herdr-daemon-discovery](herdr-daemon-discovery.md) | Prove the `[[startup]]` daemon model, `events.subscribe` framing, and a plain-shell activity signal on the host | in progress |
 | 4 | [agent-caffeinate](agent-caffeinate.md) | Hold a sleep-inhibiting assertion while agents are working, release it after a minute idle | complete |
 | 5 | [workspace-time-tracker](workspace-time-tracking.md) | Track time spent per Space, stopping on switch and on inactivity | complete |
+| 6 | [caffeinate-grace-tuning](caffeinate-grace-tuning.md) | Set idleGraceSec from measured false-idle gaps |  |

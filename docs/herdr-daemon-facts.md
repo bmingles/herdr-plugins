@@ -248,6 +248,16 @@ entirely (the periodic re-seed *becomes* the mechanism rather than a backstop), 
 gives server-death detection for free via a failed connect — which A1b proved is a
 correctness requirement. A 2 s poll costs ~0.02% of a core.
 
+A1b has a second consequence, found while implementing: because Herdr never reaps a
+plugin daemon, a daemon that is alive-but-stuck is not cleaned up by anything, and its
+lock is keyed on the socket path — so it blocks its own replacement across a Herdr
+restart, leaving that server permanently unmanaged. A plugin daemon therefore needs
+**two** liveness mechanisms, not one: it must notice its server dying (failed connect),
+and a starting daemon must be able to displace a predecessor that has stopped making
+progress. `agent-caffeinate` implements the latter by writing `updated_at` on every poll
+and treating a several-interval-stale holder as displaceable, after a confirmation delay
+so a machine returning from sleep is not mistaken for a wedge.
+
 The `[[events]]` hook on `workspace.focused` still earns its place for instant
 self-heal, and a subscription remains the right tool if sub-second latency is ever
 wanted.
