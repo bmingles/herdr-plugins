@@ -316,11 +316,13 @@ need macOS.
 
 - [x] `herdr plugin link ./agent-caffeinate` then restart a **probe** session; the daemon
       appears in `ps` and `daemon.log` shows the seed — done in-container
-- [ ] Run a real Claude task: `pmset -g assertions` shows `PreventUserIdleSystemSleep`
-      within ~2 s of the agent going `working` — **macOS only.** The equivalent with a
-      real Herdr `working` status and a fake inhibitor passed in-container
-- [ ] ~60 s after the task finishes the assertion is gone, and `daemon.log` records
-      `reason=idle-grace`
+- [x] Run a real Claude task: the inhibitor starts within ~2 s of the agent going
+      `working`. **Confirmed on the macOS host by the user** via `pgrep -l caffeinate`,
+      against a real containerised Claude session — which also confirms agent detection
+      survives `docker exec`, the one link untestable from inside the container.
+- [x] ~60 s after the task finishes the assertion is gone. **Confirmed on the macOS
+      host by the user.** Expect 60-62 s: the release fires on the first poll after the
+      grace expires, and `pollIntervalSec` defaults to 2.
 - [x] `herdr plugin log list --plugin agent-caffeinate` shows the startup invocation
       exiting **0 quickly** — measured **42 ms**, exit 0; the `--ensure` hook 46 ms
 - [x] `kill -9` the daemon, then focus a workspace → the `workspace.focused` hook restarts

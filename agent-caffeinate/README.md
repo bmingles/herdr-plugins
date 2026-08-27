@@ -127,6 +127,40 @@ Or just read the path that `status` and `doctor` print. Transitions are greppabl
 
 The log is capped at 1 MB with a single rollover to `daemon.log.1`.
 
+### Choosing `idleGraceSec` from data, not vibes
+
+The default is **60 s**. The number that matters is not "how long until I want it to
+stop" — it is **how long a working agent falsely reads as idle**. Claude's detection
+carries a rule literally named `default_known_agent_idle_fallback`: identity known, no
+rule matched. `idle` there is an absence of evidence, not evidence the agent stopped. If
+`idleGraceSec` is shorter than the longest such gap, the machine can sleep mid-task —
+the exact thing this plugin exists to prevent.
+
+At `"logLevel": "debug"` the daemon records every status change with the duration of the
+status it left:
+
+```
+2026-08-27T09:12:03-05:00 debug status w4:p2 working -> idle (was working for 41.2s)
+2026-08-27T09:12:11-05:00 debug status w4:p2 idle -> working (was idle for 8.4s)
+```
+
+A `idle -> working (was idle for Ns)` line **inside** a task you know was running the
+whole time is a false-idle gap of N seconds. Run a few real tasks, then:
+
+```sh
+grep 'idle -> working' daemon.log | sed 's/.*was idle for //' | sort -rn | head
+```
+
+Set `idleGraceSec` comfortably above the largest value you see. If your gaps are all
+small, a shorter grace such as 30 is safe; the default is 60 because the cost of being
+too long is nearly zero (we hold `-i -s`, so the display still sleeps and locks, and all
+you delay is the start of macOS's own multi-minute idle countdown) while the cost of
+being too short is an interrupted agent.
+
+Note `blocked` is not an active status, so an agent waiting at a permission prompt is
+already counting down. That is deliberate — nothing is in flight — but it means the grace
+also covers "I stepped away while it was asking me something".
+
 ## Tests
 
 ```sh

@@ -113,3 +113,50 @@ class TrackerTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TransitionJournalTest(unittest.TestCase):
+    """The diagnostic that tells us what idleGraceSec should actually be."""
+
+    def setUp(self):
+        from tracker import TransitionJournal
+        self.clock = FakeClock()
+        self.j = TransitionJournal(clock=self.clock)
+
+    def test_first_sighting_is_announced(self):
+        self.assertEqual(self.j.observe({"w1:p1": "idle"}),
+                         ["status w1:p1 appeared as idle"])
+
+    def test_no_change_is_silent(self):
+        self.j.observe({"w1:p1": "working"})
+        for _ in range(10):
+            self.clock.advance(2)
+            self.assertEqual(self.j.observe({"w1:p1": "working"}), [])
+
+    def test_a_false_idle_gap_is_directly_readable(self):
+        self.j.observe({"w1:p1": "working"})
+        self.clock.advance(30.0)
+        self.j.observe({"w1:p1": "idle"})       # agent still working, rules lost it
+        self.clock.advance(8.4)
+        lines = self.j.observe({"w1:p1": "working"})
+        self.assertEqual(lines, ["status w1:p1 idle -> working (was idle for 8.4s)"])
+
+    def test_vanishing_pane_is_reported_with_its_last_status(self):
+        self.j.observe({"w1:p1": "working"})
+        self.clock.advance(5.0)
+        self.assertEqual(self.j.observe({}),
+                         ["status w1:p1 vanished while working (after 5.0s)"])
+
+    def test_tracks_several_panes_independently(self):
+        self.j.observe({"a": "working", "b": "idle"})
+        self.clock.advance(3.0)
+        lines = self.j.observe({"a": "working", "b": "working"})
+        self.assertEqual(len(lines), 1)
+        self.assertIn("status b idle -> working", lines[0])
+
+    def test_a_reappearing_pane_starts_fresh(self):
+        self.j.observe({"w1:p1": "working"})
+        self.j.observe({})
+        self.clock.advance(100.0)
+        self.assertEqual(self.j.observe({"w1:p1": "idle"}),
+                         ["status w1:p1 appeared as idle"])

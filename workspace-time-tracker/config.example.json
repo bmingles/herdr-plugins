@@ -1,0 +1,26 @@
+{
+  // Every key is OPTIONAL and shown at its default. The plugin works with no config
+  // file at all.
+
+  // Quiet time before the open entry is closed. The entry is backdated to the last
+  // sign of activity, so this window is never counted as work.
+  "idleTimeoutSec": 60,
+
+  // How often the focused pane's screen is hashed. This is also the accuracy bound on
+  // an entry's end time. Only plain (non-agent) panes are ever hashed.
+  "pollIntervalSec": 10,
+
+  // How often focus and agent status are polled. Cheaper than the screen read
+  // (~0.35ms), so it runs more often -- it is what makes a Space switch land promptly.
+  "snapshotIntervalSec": 2,
+
+  // Agent statuses that count as activity on their own.
+  "activeStatuses": ["working"],
+
+  // Entries shorter than this are discarded rather than written, so paging through
+  // Spaces looking for one does not leave a trail of stubs. Set 0 to keep everything.
+  "minEntrySec": 30,
+
+  // "error" | "warn" | "info" | "debug"
+  "logLevel": "info"
+}

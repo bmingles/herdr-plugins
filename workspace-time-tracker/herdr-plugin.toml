@@ -1,0 +1,30 @@
+id = "workspace-time-tracker"
+name = "Workspace Time Tracker"
+version = "0.1.0"
+min_herdr_version = "0.8.0"
+description = "Track time spent in each Herdr Space"
+platforms = ["macos", "linux"]
+
+[[startup]]
+command = ["./bin/track", "daemon"]
+
+# Self-heal only -- the daemon polls focus on its own. This recovers a daemon that died,
+# or a plugin linked mid-session, on the next genuine Space change. (Re-focusing the
+# Space you are already on emits no event.)
+[[events]]
+on = "workspace.focused"
+command = ["./bin/track", "daemon", "--ensure"]
+
+[[actions]]
+id = "flush"
+title = "Close current time entry"
+contexts = ["global"]
+command = ["./bin/track", "flush"]
+
+# No `report` action: its entire value is legible output, and a plugin action's stdout
+# reaches the user only through `herdr plugin log list`, JSON-escaped. `report` is a
+# terminal command.
+#
+# No [[panes]] block either. A live totals pane is the obvious next feature, but
+# plugin-owned panes are wholly unexercised in this repo's research -- that is a separate
+# plan with its own discovery, not a rider on this one.

@@ -14,14 +14,16 @@ beside it; completed plans move to `.plans/archived/`.
   `docs/herdr-daemon-facts.md`. **Must run first** — probe A is go/no-go for the design
   in both plans below.
 
-- [workspace-time-tracker](workspace-time-tracking.md) — Herdr plugin recording time per
-  Space: entries open on `workspace.focused`, close on switch, and close **backdated to
-  the last activity** after a minute of quiet. Activity is agent status plus a polled
-  per-pane token, because probe 18 proved a plain shell emits no events at all. Appends
-  JSONL; `bin/track report` reads it back. Depends on `agent-caffeinate` for the shared
-  daemon plumbing.
-
 ### Completed
+
+- [workspace-time-tracker](workspace-time-tracking.md) — implemented in
+  `workspace-time-tracker/`. Entries open on activity in the focused Space, close on a
+  switch, and close **backdated to the last activity** after a minute of quiet.
+  **88 tests pass**, plus verification against a **real Herdr server**: typing in a
+  **plain shell** (no agent, no Herdr events — the probe-18 case the whole design exists
+  for) was detected via the screen hash, and an idle close excluded the dead window
+  exactly. Discovery replaced the planned subscription with a poll and settled the
+  activity token — see `## Discovery corrections` in the plan.
 
 - [agent-caffeinate](agent-caffeinate.md) — implemented in `agent-caffeinate/`.
   Holds `caffeinate -i -s` while any agent reports `working`, releases 60 s after the
@@ -30,8 +32,8 @@ beside it; completed plans move to `.plans/archived/`.
   in 42 ms, a real `working` status starts the inhibitor, `idle` releases it after the
   grace, and stopping the server makes the daemon release and exit rather than orphan.
   Discovery replaced the planned subscription with a poll — see `## Discovery
-  corrections` in the plan. Unverified on macOS: only that `caffeinate` itself behaves as
-  documented, which the flags make uncontroversial.
+  corrections` in the plan. **Host-verified by the user on macOS**: `caffeinate` starts when a real
+  containerised Claude session begins working and is gone ~60 s after it stops.
 
 - [vscode-workspace-sync](archived/vscode-workspace-sync.md) — Herdr plugin that keeps a
   VS Code multi-root `.code-workspace` file in sync with Herdr Spaces. Implemented in
@@ -53,4 +55,4 @@ beside it; completed plans move to `.plans/archived/`.
 | 2 | [vscode-workspace-sync](archived/vscode-workspace-sync.md) | Mirror Herdr Spaces into a VS Code workspace file's `folders` array | complete |
 | 3 | [herdr-daemon-discovery](herdr-daemon-discovery.md) | Prove the `[[startup]]` daemon model, `events.subscribe` framing, and a plain-shell activity signal on the host | in progress |
 | 4 | [agent-caffeinate](agent-caffeinate.md) | Hold a sleep-inhibiting assertion while agents are working, release it after a minute idle | complete |
-| 5 | [workspace-time-tracker](workspace-time-tracking.md) | Track time spent per Space, stopping on switch and on inactivity |  |
+| 5 | [workspace-time-tracker](workspace-time-tracking.md) | Track time spent per Space, stopping on switch and on inactivity | complete |

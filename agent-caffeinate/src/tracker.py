@@ -19,6 +19,51 @@ START = "start"
 STOP = "stop"
 
 
+class TransitionJournal(object):
+    """Observes per-pane status changes and how long each status lasted.
+
+    Purely diagnostic -- nothing here influences the inhibitor. It exists to answer one
+    question with data instead of guesswork: **how long does a working agent falsely
+    read as idle?** Claude's detection has a documented
+    `default_known_agent_idle_fallback` rule -- "identity known, no rule matched" -- so
+    `idle` is an absence of evidence, not evidence of absence. `idleGraceSec` has to be
+    longer than the longest such gap, and the log lines this emits make those gaps
+    directly greppable:
+
+        status w4:p2 idle -> working (was idle for 8.4s)
+
+    The `was idle for Ns` on a return to `working` *is* the false-idle gap.
+    """
+
+    __slots__ = ("clock", "since")
+
+    def __init__(self, clock=time.monotonic):
+        self.clock = clock
+        self.since = {}
+
+    def observe(self, statuses):
+        """Return a list of human-readable change lines for this poll."""
+        now = self.clock()
+        lines = []
+        for pane_id in sorted(statuses):
+            status = statuses[pane_id]
+            known = self.since.get(pane_id)
+            if known is None:
+                self.since[pane_id] = (status, now)
+                lines.append("status %s appeared as %s" % (pane_id, status))
+                continue
+            previous, started = known
+            if previous != status:
+                lines.append("status %s %s -> %s (was %s for %.1fs)"
+                             % (pane_id, previous, status, previous, now - started))
+                self.since[pane_id] = (status, now)
+        for pane_id in sorted(set(self.since) - set(statuses)):
+            previous, started = self.since.pop(pane_id)
+            lines.append("status %s vanished while %s (after %.1fs)"
+                         % (pane_id, previous, now - started))
+        return lines
+
+
 class Tracker(object):
     """Decides when the inhibitor should be running.
 

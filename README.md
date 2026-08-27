@@ -9,6 +9,7 @@ coding agents.
 | --- | --- |
 | [`vscode-workspace-sync/`](vscode-workspace-sync/) | Keeps the `folders` array of a VS Code multi-root `.code-workspace` file in sync with your Herdr Spaces — create, close, rename or reorder a Space and the VS Code explorer follows, with no window reload. Python 3.9+, standard library only, no build step. |
 | [`agent-caffeinate/`](agent-caffeinate/) | Keeps your machine awake for exactly as long as your coding agents are working, and lets it sleep a minute after they stop. No config required. Python 3.9+, standard library only, no build step. |
+| [`workspace-time-tracker/`](workspace-time-tracker/) | Records how long you actually spend in each Space. Entries close on a switch, and close backdated to your last activity after a minute of quiet — so idle time is never billed as work. `track report` reads it back. Python 3.9+, standard library only, no build step. |
 
 Install a plugin straight from this repo:
 

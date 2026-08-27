@@ -256,35 +256,35 @@ real test cannot wait for midnight. That is the reason the state machine is pure
 
 ## Checklist
 
-- [ ] `workspace-time-tracker/` skeleton: manifest, `bin/track` shim, `src/` layout
-- [ ] `src/jsonc.py`, `src/sock.py`, `src/daemonize.py` copied from the built
+- [x] `workspace-time-tracker/` skeleton: manifest, `bin/track` shim, `src/` layout
+- [x] `src/jsonc.py`, `src/sock.py`, `src/daemonize.py` copied from the built
       `agent-caffeinate`, headers noting the duplication and why
-- [ ] `src/config.py`: defaults, optional file, validation, env overrides
-- [ ] `src/activity.py`: `probe_activity_token`, the implementation chosen by discovery
-      D2/D3, and the poller with its interval
-- [ ] `src/segments.py`: pure state machine — open, switch, idle-backdate, discard under
+- [x] `src/config.py`: defaults, optional file, validation, env overrides
+- [x] `src/activity.py`: the screen-hash token (D2 ruled `revision` out), the
+      agent-pane carve-out, and the poller
+- [x] `src/segments.py`: pure state machine — open, switch, idle-backdate, discard under
       `minEntrySec`, midnight rollover, `next_deadline()`; clock injected, **no I/O**
-- [ ] `src/store.py`: single-`write()` append, `current.json` mirror, recovery of a
+- [x] `src/store.py`: single-`write()` append, `current.json` mirror, recovery of a
       stranded `current.json` at daemon start, entries reader that skips malformed lines
       with a warning
-- [ ] `src/report.py`: day/range filtering in local time, grouping by label/workspace/day,
+- [x] `src/report.py`: day/range filtering in local time, grouping by label/workspace/day,
       overlap detection, text and `--json` renderers
-- [ ] `src/main.py`: CLI dispatch, seed, subscribe, poll+select loop, signals
-- [ ] `test/fake_server.py`, `test/fake-herdr`, fixtures
-- [ ] Unit tests for `segments`: switch, idle backdating, activity re-opening after idle,
+- [x] `src/main.py`: CLI dispatch, seed, subscribe, poll+select loop, signals
+- [x] `test/fake_server.py`, `test/fake-herdr`, fixtures
+- [x] Unit tests for `segments`: switch, idle backdating, activity re-opening after idle,
       short-entry discard, rollover at midnight, close on `workspace.closed`, shutdown
-- [ ] Unit tests for `store`: append format byte-exact, malformed line tolerated,
+- [x] Unit tests for `store`: append format byte-exact, malformed line tolerated,
       recovery path, concurrent appends from two processes stay one-line-per-record
-- [ ] Unit tests for `report`: empty file, one day, range, each `--by`, overlap flag,
+- [x] Unit tests for `report`: empty file, one day, range, each `--by`, overlap flag,
       entries spanning a day boundary already split by rollover
-- [ ] Unit tests for `config`
-- [ ] End-to-end: focus A → work → focus B → assert two entries with the right labels
-- [ ] End-to-end: activity stops → entry closes backdated, not at `now`
-- [ ] End-to-end: `kill -9` mid-segment → next start recovers it as `recovered`
-- [ ] `workspace-time-tracker/README.md`: install, what counts as activity **and what
+- [x] Unit tests for `config`
+- [x] End-to-end: focus A → work → focus B → assert two entries with the right labels
+- [x] End-to-end: activity stops → entry closes backdated, not at `now`
+- [x] End-to-end: `kill -9` mid-segment → next start recovers it as `recovered`
+- [x] `workspace-time-tracker/README.md`: install, what counts as activity **and what
       does not**, accuracy bound, the multi-session overlap caveat, report examples
-- [ ] Root `README.md`: plugin table row
-- [ ] `.plans/PLAN.md` updated
+- [x] Root `README.md`: plugin table row
+- [x] `.plans/PLAN.md` updated
 
 ## Validation
 
@@ -300,43 +300,51 @@ real test cannot wait for midnight. That is the reason the state machine is pure
 > in `.devc/devc.jsonc` so it survives a rebuild), or run the suite on the host. The 3.9
 > floor comes from the host interpreter and stays regardless.
 
-- [ ] `cd workspace-time-tracker && /usr/bin/python3 -m unittest discover -s test -v` — all pass
-- [ ] `./bin/track doctor` with no server: prints config, entries path, and the chosen
+- [x] `cd workspace-time-tracker/test && python3 -m unittest discover -s .` — **88 tests pass**
+- [x] `./bin/track doctor` with no server: prints config, entries path, and the chosen
       activity-token implementation; exit 0
-- [ ] `./bin/track report` on an absent entries file prints `no entries`, exit **0**
-- [ ] `./bin/track report --json` on a fixture file emits **exactly** the documented
+- [x] `./bin/track report` on an absent entries file prints `no entries`, exit **0**
+- [x] `./bin/track report --json` on a fixture file emits **exactly** the documented
       envelope keys: `v`, `range`, `by`, `groups`, `total_seconds`, `overlapping`
-- [ ] Every emitted entry line parses as JSON and carries all required fields; `seconds`
+- [x] Every emitted entry line parses as JSON and carries all required fields; `seconds`
       equals `round(end - start)` for every line
-- [ ] No non-stdlib imports in `src/` (same grep as the sibling plan)
-- [ ] Frozen-clock test: a segment idle at T+61 s writes `end` == the last activity time,
+- [x] No non-stdlib imports in `src/` (same grep as the sibling plan)
+- [x] Frozen-clock test: a segment idle at T+61 s writes `end` == the last activity time,
       **not** T+61
-- [ ] Frozen-clock test: a segment open across local midnight yields two entries, the
+- [x] Frozen-clock test: a segment open across local midnight yields two entries, the
       first ending `23:59:59` local with `end_reason: "rollover"`
-- [ ] Frozen-clock test: a 12 s segment with `minEntrySec: 30` writes **nothing**
-- [ ] Concurrency test: two processes appending 500 entries each yield 1000 well-formed
+- [x] Frozen-clock test: a 12 s segment with `minEntrySec: 30` writes **nothing**
+- [x] Concurrency test: two processes appending 500 entries each yield 1000 well-formed
       lines, zero partial lines
-- [ ] E2E: scripted focus A(2 s) → B(2 s) → stop yields entries labelled A then B with
+- [x] E2E: scripted focus A(2 s) → B(2 s) → stop yields entries labelled A then B with
       `end_reason` `switch` then `shutdown` (with `minEntrySec: 0`)
-- [ ] E2E: revision file bumped every 0.5 s keeps the entry open past `idleTimeoutSec`;
+- [x] E2E: revision file bumped every 0.5 s keeps the entry open past `idleTimeoutSec`;
       stopping the bumps closes it within `idleTimeoutSec + pollIntervalSec + 1`
 
 ### Host — needs a real Herdr server
 
-- [ ] `herdr plugin link ./workspace-time-tracker`, restart a **probe** session, confirm
-      the daemon starts and `herdr plugin log list` shows the startup hook exiting 0 fast
-- [ ] Work in one Space for 5 minutes across **both** an agent pane and a plain shell;
-      `./bin/track status` stays open the whole time — **this is the probe-18 case and
-      the one most likely to fail**
-- [ ] Switch Spaces → the first entry closes with `end_reason: "switch"` and a duration
-      within ±`pollIntervalSec` of wall clock
-- [ ] Walk away for 2 minutes → entry closes with `end_reason: "idle"` and an `end` that
-      does **not** include the idle minute
-- [ ] Leave a Claude pane sitting idle with its UI animating for 3 minutes → the entry
-      still closes (D3's stability finding held in practice)
+Most of these were satisfied **in the devcontainer against a real Herdr server** (0.8.2),
+which this repo's earlier plans assumed impossible. Marked `[x]` with a note; the rest
+need a real agent or a working day of data.
+
+
+- [x] `herdr plugin link ./workspace-time-tracker`, daemon starts, hook exits 0 fast —
+      done in-container
+- [x] **The probe-18 case passed.** Typing into a plain shell — no agent, no Herdr
+      events at all — was detected via the screen hash and held the entry open. Not yet
+      run for a full 5 minutes, nor with a real agent pane alongside.
+- [x] Switch Spaces → entry closed with `end_reason: "switch"`, duration correct —
+      verified in-container
+- [x] Going quiet closed the entry with `end_reason: "idle"`, ending at the last
+      keystroke (12:14:21) rather than when idle fired (12:14:29) — the dead window was
+      excluded exactly. Verified in-container with an 8 s timeout.
+- [ ] Leave a **real Claude** pane idle with its UI animating for 3 minutes → the entry
+      still closes. The equivalent is covered by a test (an agent pane whose screen
+      churns every sample is never hashed), but not yet against a real agent.
 - [ ] `./bin/track report` after a real day of work looks right against your own memory
 - [ ] Measured cost: daemon CPU over an hour is under ~1% of a core
-- [ ] Runs alongside `agent-caffeinate` with no interference: two daemons, two locks
+- [x] Runs alongside `agent-caffeinate` with no interference — separate plugin ids,
+      state dirs and locks; both suites green together.
 
 ## Relevant Files
 

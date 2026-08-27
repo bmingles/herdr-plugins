@@ -22,7 +22,7 @@ import config as config_mod          # noqa: E402
 import daemonize                     # noqa: E402
 import sock                          # noqa: E402
 from inhibitor import Inhibitor      # noqa: E402
-from tracker import START, STOP, Tracker  # noqa: E402
+from tracker import START, STOP, Tracker, TransitionJournal  # noqa: E402
 
 EXIT_OK = 0
 EXIT_CONFIG = 1
@@ -76,6 +76,7 @@ def _write_status(paths, tracker, inhibitor, socket_path, started_at):
 def run_loop(cfg, socket_path, paths, log, stop_flag):
     """The daemon proper. Returns an exit code."""
     tracker = Tracker(cfg.active_statuses, cfg.idle_grace_sec)
+    journal = TransitionJournal()
     inhibitor = Inhibitor(cfg.inhibitor_command, paths.inhibitor_state, log)
     inhibitor.adopt_stale()
     started_at = time.time()
@@ -97,6 +98,9 @@ def run_loop(cfg, socket_path, paths, log, stop_flag):
                 log.warn("snapshot unusable: %s" % exc)
                 time.sleep(cfg.poll_interval_sec)
                 continue
+
+            for line in journal.observe(statuses):
+                log.debug(line)
 
             action = tracker.update(statuses)
             if action == START:
