@@ -1,6 +1,7 @@
 {
-  // Absolute path to the .code-workspace file this plugin owns. Required.
-  // "~" is expanded. The file must already exist -- the plugin will not create it.
+  // Absolute path to the .code-workspace file this plugin owns. Required, unless
+  // "sessions" below covers every session you run. "~" is expanded. The file must
+  // already exist -- the plugin will not create it.
   "workspaceFile": "~/code/my-workspace.code-workspace",
 
   // "mirror" (default) -> folders mirrors every Space, in sidebar order.
@@ -11,5 +12,25 @@
   // Strongly recommended: whatever sits at folders[0] is rewritten whenever the first
   // Space changes, and changing folders[0] restarts VS Code's extension host. Pinning
   // one stable folder keeps all Space churn at index 1+, which costs nothing.
-  "pinnedFolders": []
+  "pinnedFolders": [],
+
+  // Optional. One workspace file per Herdr session, keyed by session name as shown by
+  // `herdr session list`. Plugin registration is global -- every session's server runs
+  // this plugin -- so without a map only the default session syncs and named sessions
+  // do nothing.
+  //
+  // A session listed here uses its own "workspaceFile" (required, never inherited);
+  // "mode" and "pinnedFolders" fall back to the top-level values above unless the entry
+  // sets them. "default" is a legal key and names the default session, so you can map
+  // every session here and drop the top-level "workspaceFile" entirely.
+  //
+  // A session that is running but absent from this map syncs nothing, exactly as a
+  // named session does today. Two entries pointing at the same file is a hard error:
+  // that is the two-servers-fighting-over-one-file case this map exists to prevent.
+  "sessions": {
+    // "default": { "workspaceFile": "~/code/main.code-workspace" },
+    // "work":    { "workspaceFile": "~/code/work.code-workspace",
+    //              "pinnedFolders": ["~/code/work"] },
+    // "oss":     { "workspaceFile": "~/code/oss.code-workspace", "mode": "active" }
+  }
 }

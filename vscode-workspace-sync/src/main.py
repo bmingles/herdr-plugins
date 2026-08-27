@@ -35,15 +35,16 @@ def err(msg):
     sys.stderr.write("%s: %s\n" % (config.PLUGIN_ID, msg))
 
 
-def summary(reason, mode, target, count, result):
+def summary(reason, session, mode, target, count, result):
     """The one line every run prints.
 
     Hook stdout is invisible except through `herdr plugin log list`, so this line is the
-    plugin's entire operational record.
+    plugin's entire operational record. `session=` is what tells two sessions' lines
+    apart in one interleaved log.
     """
     log(
-        "%s: reason=%s mode=%s target=%s folders=%d result=%s"
-        % (config.PLUGIN_ID, reason, mode, target, count, result)
+        "%s: reason=%s session=%s mode=%s target=%s folders=%d result=%s"
+        % (config.PLUGIN_ID, reason, session, mode, target or "-", count, result)
     )
 
 
@@ -95,11 +96,33 @@ def run_doctor(cfg, reason):
     log("")
     log("config file      : %s" % cfg.source_path)
     log("  exists         : %s" % os.path.exists(cfg.source_path))
-    log("  workspaceFile  : %s" % cfg.workspace_file)
+    log("  workspaceFile  : %s" % (cfg.workspace_file or "<none for this session>"))
     log("  mode           : %s" % cfg.mode)
     log("  pinnedFolders  : %s" % (cfg.pinned_folders or "[]"))
     for warning in cfg.warnings:
         log("  warning        : %s" % warning)
+
+    log("")
+    log("herdr socket     : %s" % (os.environ.get(config.ENV_SOCKET_PATH) or "<unset>"))
+    log("  session        : %s" % cfg.session_name)
+    log("  resolved from  : %s" % cfg.selection)
+    if cfg.sessions:
+        log("  session map    :")
+        for name in sorted(cfg.sessions):
+            log(
+                "    %-14s %s%s"
+                % (
+                    name,
+                    cfg.sessions[name].workspace_file,
+                    "   <- this session" if name == cfg.session_name else "",
+                )
+            )
+    if cfg.skip_reason is not None:
+        log("  guard          : SKIP - %s" % cfg.skip_reason)
+        log("")
+        log("a real run would write nothing and exit 0.")
+        summary(reason, cfg.session_name, cfg.mode, None, 0, RESULT_SKIPPED_SESSION)
+        return EXIT_OK
 
     real = os.path.realpath(cfg.workspace_file)
     exists = os.path.isfile(real)
@@ -109,9 +132,6 @@ def run_doctor(cfg, reason):
     log("  exists         : %s" % exists)
 
     log("")
-    log("herdr socket     : %s" % (os.environ.get("HERDR_SOCKET_PATH") or "<unset>"))
-    skip = config.named_session()
-    log("  session guard  : %s" % ("sync" if skip is None else "SKIP - %s" % skip))
     log("snapshot source  : %s" % herdr.snapshot_source())
 
     try:
@@ -155,7 +175,7 @@ def run_doctor(cfg, reason):
         log("would write      : no (a real run would log unchanged)")
     else:
         log("would write      : yes")
-    summary(reason, cfg.mode, cfg.workspace_file, len(entries), "doctor")
+    summary(reason, cfg.session_name, cfg.mode, cfg.workspace_file, len(entries), "doctor")
     return EXIT_OK
 
 
@@ -179,13 +199,18 @@ def run_sync(cfg, reason):
                 "result far more likely means Herdr returned something unexpected "
                 "than that no folders are wanted."
             )
-            summary(reason, cfg.mode, cfg.workspace_file, 0, RESULT_SKIPPED_EMPTY)
+            summary(
+                reason, cfg.session_name, cfg.mode, cfg.workspace_file, 0,
+                RESULT_SKIPPED_EMPTY,
+            )
             return EXIT_OK
         # Pass the *configured* path: `sync_file` realpaths it internally for the
         # write, but resolves relative `folders` entries against the configured
         # directory -- which is what VS Code resolves against too.
         result = write_mod.sync_file(cfg.workspace_file, entries)
-        summary(reason, cfg.mode, cfg.workspace_file, len(entries), result)
+        summary(
+            reason, cfg.session_name, cfg.mode, cfg.workspace_file, len(entries), result
+        )
         return EXIT_OK
     except herdr.HerdrError as exc:
         err("cannot read Herdr state: %s" % exc)
@@ -207,10 +232,9 @@ def main(argv=None):
     if args.doctor:
         return run_doctor(cfg, args.reason)
 
-    skip = config.named_session()
-    if skip is not None:
-        log("%s: %s" % (config.PLUGIN_ID, skip))
-        summary(args.reason, cfg.mode, cfg.workspace_file, 0, RESULT_SKIPPED_SESSION)
+    if cfg.skip_reason is not None:
+        log("%s: %s" % (config.PLUGIN_ID, cfg.skip_reason))
+        summary(args.reason, cfg.session_name, cfg.mode, None, 0, RESULT_SKIPPED_SESSION)
         return EXIT_OK
 
     warn_unpinned_active(cfg)

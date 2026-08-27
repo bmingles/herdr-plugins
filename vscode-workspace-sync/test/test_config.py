@@ -129,5 +129,238 @@ class TestLoad(ConfigCase):
 
 
 
+class TestResolveSessionName(unittest.TestCase):
+    """Derivation from `$HERDR_SOCKET_PATH`, per probe 11's recorded layouts."""
+
+    def name(self, socket_path):
+        env = {} if socket_path is None else {config.ENV_SOCKET_PATH: socket_path}
+        return config.resolve_session_name(env)
+
+    def test_unset_socket_is_the_default_session(self):
+        self.assertEqual(self.name(None), "default")
+
+    def test_default_session_socket(self):
+        self.assertEqual(self.name("/Users/x/.config/herdr/herdr.sock"), "default")
+
+    def test_named_session_socket(self):
+        self.assertEqual(
+            self.name("/Users/x/.config/herdr/sessions/probe/herdr.sock"), "probe"
+        )
+
+    def test_session_literally_named_sessions(self):
+        self.assertEqual(
+            self.name("/Users/x/.config/herdr/sessions/sessions/herdr.sock"), "sessions"
+        )
+
+    def test_socket_somewhere_else_entirely_is_default(self):
+        self.assertEqual(self.name("/tmp/herdr.sock"), "default")
+
+
+class TestSessionMap(ConfigCase):
+    """The four resolution rules in `config.load`."""
+
+    def setUp(self):
+        ConfigCase.setUp(self)
+        self.other = os.path.join(self.tmp, "other.code-workspace")
+        with open(self.other, "w") as fh:
+            fh.write("{}\n")
+
+    def as_session(self, name):
+        return {config.ENV_SOCKET_PATH: "/x/.config/herdr/sessions/%s/herdr.sock" % name}
+
+    def load_raw(self, body, env_extra=None):
+        return self.load(text=json.dumps(body), env_extra=env_extra)
+
+    # -- rule 2 ------------------------------------------------------------
+
+    def test_named_session_uses_its_own_entry(self):
+        cfg = self.load_raw(
+            {"sessions": {"work": {"workspaceFile": self.other}}},
+            env_extra=self.as_session("work"),
+        )
+        self.assertEqual(cfg.session_name, "work")
+        self.assertEqual(cfg.workspace_file, self.other)
+        self.assertIsNone(cfg.skip_reason)
+        self.assertIn("work", cfg.selection)
+
+    def test_entry_inherits_mode_and_pinned_from_top_level(self):
+        cfg = self.load_raw(
+            {
+                "mode": "active",
+                "pinnedFolders": [self.tmp],
+                "sessions": {"work": {"workspaceFile": self.other}},
+            },
+            env_extra=self.as_session("work"),
+        )
+        self.assertEqual(cfg.mode, "active")
+        self.assertEqual(cfg.pinned_folders, [self.tmp])
+
+    def test_entry_overrides_mode_and_pinned(self):
+        cfg = self.load_raw(
+            {
+                "mode": "active",
+                "pinnedFolders": [self.tmp],
+                "sessions": {
+                    "work": {
+                        "workspaceFile": self.other,
+                        "mode": "mirror",
+                        "pinnedFolders": [],
+                    }
+                },
+            },
+            env_extra=self.as_session("work"),
+        )
+        self.assertEqual(cfg.mode, "mirror")
+        self.assertEqual(cfg.pinned_folders, [])
+
+    # -- rule 3 ------------------------------------------------------------
+
+    def test_default_session_falls_back_to_top_level(self):
+        cfg = self.load_raw(
+            {
+                "workspaceFile": self.target,
+                "sessions": {"work": {"workspaceFile": self.other}},
+            }
+        )
+        self.assertEqual(cfg.session_name, "default")
+        self.assertEqual(cfg.workspace_file, self.target)
+        self.assertEqual(cfg.selection, config.SELECTION_TOP_LEVEL)
+
+    def test_explicit_default_entry_beats_top_level(self):
+        cfg = self.load_raw(
+            {
+                "workspaceFile": self.target,
+                "sessions": {"default": {"workspaceFile": self.other}},
+            }
+        )
+        self.assertEqual(cfg.workspace_file, self.other)
+
+    # -- rule 4 ------------------------------------------------------------
+
+    def test_unmapped_named_session_skips(self):
+        cfg = self.load_raw(
+            {"sessions": {"work": {"workspaceFile": self.other}}},
+            env_extra=self.as_session("play"),
+        )
+        self.assertIsNone(cfg.workspace_file)
+        self.assertIsNotNone(cfg.skip_reason)
+        self.assertIn("play", cfg.skip_reason)
+        self.assertIn("work", cfg.skip_reason)
+        self.assertEqual(cfg.selection, config.SELECTION_UNMAPPED)
+
+    def test_named_session_with_no_sessions_key_skips_as_before(self):
+        # The shipped behaviour, reached by rule 4 rather than the deleted
+        # `named_session()`: a flat config never syncs a named session.
+        cfg = self.load_raw(
+            {"workspaceFile": self.target}, env_extra=self.as_session("other")
+        )
+        self.assertIsNone(cfg.workspace_file)
+        self.assertIn("only the default session syncs", cfg.skip_reason)
+
+    def test_default_session_skips_when_only_named_sessions_are_mapped(self):
+        cfg = self.load_raw({"sessions": {"work": {"workspaceFile": self.other}}})
+        self.assertEqual(cfg.session_name, "default")
+        self.assertIsNone(cfg.workspace_file)
+        self.assertIsNotNone(cfg.skip_reason)
+
+    def test_env_override_beats_an_unmapped_session(self):
+        cfg = self.load_raw(
+            {"sessions": {"work": {"workspaceFile": self.other}}},
+            env_extra=dict(
+                self.as_session("play"), **{config.ENV_WORKSPACE_FILE: self.target}
+            ),
+        )
+        self.assertEqual(cfg.workspace_file, self.target)
+        self.assertIsNone(cfg.skip_reason)
+
+    # -- top-level requirement --------------------------------------------
+
+    def test_top_level_workspace_file_optional_when_sessions_present(self):
+        cfg = self.load_raw(
+            {"sessions": {"work": {"workspaceFile": self.other}}},
+            env_extra=self.as_session("work"),
+        )
+        self.assertEqual(cfg.workspace_file, self.other)
+
+    def test_still_fatal_with_neither_top_level_nor_sessions(self):
+        with self.assertRaises(config.ConfigError) as ctx:
+            self.load_raw({"sessions": {}})
+        self.assertIn("workspaceFile", str(ctx.exception))
+
+    # -- uniqueness --------------------------------------------------------
+
+    def test_two_entries_sharing_a_file_is_fatal_and_names_both(self):
+        with self.assertRaises(config.ConfigError) as ctx:
+            self.load_raw(
+                {
+                    "sessions": {
+                        "work": {"workspaceFile": self.other},
+                        "oss": {"workspaceFile": self.other},
+                    }
+                }
+            )
+        message = str(ctx.exception)
+        self.assertIn("work", message)
+        self.assertIn("oss", message)
+        self.assertIn(os.path.realpath(self.other), message)
+
+    def test_entry_colliding_with_reachable_top_level_is_fatal(self):
+        with self.assertRaises(config.ConfigError):
+            self.load_raw(
+                {
+                    "workspaceFile": self.target,
+                    "sessions": {"work": {"workspaceFile": self.target}},
+                }
+            )
+
+    def test_default_entry_may_shadow_the_top_level_file(self):
+        # The top level is unreachable once `sessions.default` exists (rule 3 is only
+        # tried when there is no entry), so this is not a collision.
+        cfg = self.load_raw(
+            {
+                "workspaceFile": self.target,
+                "sessions": {"default": {"workspaceFile": self.target}},
+            }
+        )
+        self.assertEqual(cfg.workspace_file, self.target)
+
+    # -- entry validation --------------------------------------------------
+
+    def test_entry_without_workspace_file_is_fatal_and_names_the_session(self):
+        with self.assertRaises(config.ConfigError) as ctx:
+            self.load_raw({"sessions": {"work": {"mode": "active"}}})
+        self.assertIn("work", str(ctx.exception))
+
+    def test_entry_that_is_not_an_object_is_fatal(self):
+        with self.assertRaises(config.ConfigError):
+            self.load_raw({"sessions": {"work": "~/w.code-workspace"}})
+
+    def test_sessions_that_is_not_an_object_is_fatal(self):
+        with self.assertRaises(config.ConfigError):
+            self.load_raw({"workspaceFile": self.target, "sessions": ["work"]})
+
+    def test_bad_mode_inside_an_entry_is_fatal(self):
+        with self.assertRaises(config.ConfigError):
+            self.load_raw(
+                {"sessions": {"work": {"workspaceFile": self.other, "mode": "sideways"}}}
+            )
+
+    def test_unknown_key_inside_an_entry_is_a_warning(self):
+        cfg = self.load_raw(
+            {"sessions": {"work": {"workspaceFile": self.other, "nope": 1}}},
+            env_extra=self.as_session("work"),
+        )
+        self.assertTrue(any("nope" in w and "work" in w for w in cfg.warnings))
+
+    def test_tilde_expansion_inside_an_entry(self):
+        cfg = self.load_raw(
+            {"sessions": {"work": {"workspaceFile": "~/w.code-workspace"}}},
+            env_extra=self.as_session("work"),
+        )
+        self.assertEqual(
+            cfg.workspace_file, os.path.join(os.path.expanduser("~"), "w.code-workspace")
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

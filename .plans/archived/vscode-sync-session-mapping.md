@@ -100,35 +100,35 @@ safe.
 
 ## Checklist
 
-- [ ] `src/config.py`: add `resolve_session_name(env=None)` returning the derived name,
+- [x] `src/config.py`: add `resolve_session_name(env=None)` returning the derived name,
       per the table above.
-- [ ] `src/config.py`: `Config` gains a `session_name` slot; `load()` implements the
+- [x] `src/config.py`: `Config` gains a `session_name` slot; `load()` implements the
       four-rule resolution and populates `workspace_file`, `mode`, `pinned_folders` from
       the selected entry.
-- [ ] `src/config.py`: replace `named_session()` with the rule-4 outcome surfaced from
+- [x] `src/config.py`: replace `named_session()` with the rule-4 outcome surfaced from
       `load()` — a resolved-but-unmapped session must be representable without raising
       (e.g. `Config.skip_reason` set and `workspace_file` left `None`). Delete
       `named_session()` and its import site; do not leave both mechanisms live.
-- [ ] `src/config.py`: validate `sessions` — object of objects, string `workspaceFile`
+- [x] `src/config.py`: validate `sessions` — object of objects, string `workspaceFile`
       required per entry, unknown keys inside an entry warn (matching top-level
       behaviour), non-object entry is a `ConfigError`.
-- [ ] `src/config.py`: implement the realpath uniqueness check as a `ConfigError`.
-- [ ] `src/main.py`: `main()` consults the new skip reason instead of
+- [x] `src/config.py`: implement the realpath uniqueness check as a `ConfigError`.
+- [x] `src/main.py`: `main()` consults the new skip reason instead of
       `config.named_session()`; keep `result=skipped-session` and exit 0.
-- [ ] `src/main.py`: add `session=<name>` to `summary()`.
-- [ ] `src/main.py`: `run_doctor()` prints the resolved session name, which rule matched
+- [x] `src/main.py`: add `session=<name>` to `summary()`.
+- [x] `src/main.py`: `run_doctor()` prints the resolved session name, which rule matched
       (`sessions[<name>]`, top-level, or unmapped), and every configured session with its
       target so a user can see the whole map at once.
-- [ ] `config.example.json`: document `sessions` with the multi-session example above.
-- [ ] `README.md`: add `sessions` to the Configuration table; rewrite
+- [x] `config.example.json`: document `sessions` with the multi-session example above.
+- [x] `README.md`: add `sessions` to the Configuration table; rewrite
       `## One Herdr session at a time` to describe the mapping, retitled (e.g.
       `## One workspace file per Herdr session`). Keep the explanation of *why* the guard
       exists — the global-registration finding is the reason the feature has this shape.
-- [ ] `test/test_config.py`: cover name derivation (all four rows), the four resolution
+- [x] `test/test_config.py`: cover name derivation (all four rows), the four resolution
       rules, inheritance of `mode`/`pinnedFolders`, the uniqueness error, missing
       per-entry `workspaceFile`, and top-level `workspaceFile` absent with `sessions`
       present.
-- [ ] `test/test_cli.py`: a named session **with** a mapping writes its own file; a named
+- [x] `test/test_cli.py`: a named session **with** a mapping writes its own file; a named
       session **without** one still logs `skipped-session` and writes nothing; the env
       override beats an unmapped session.
 
@@ -136,20 +136,20 @@ safe.
 
 Run from `vscode-workspace-sync/`. `/usr/bin/python3` specifically — the floor is 3.9.
 
-- [ ] `/usr/bin/python3 -m unittest discover -s test -v` — all pass, count strictly above
+- [x] `/usr/bin/python3 -m unittest discover -s test -v` — all pass, count strictly above
       the current 147.
-- [ ] `/usr/bin/python3 -m py_compile src/*.py` — clean.
-- [ ] Existing `test_named_session_socket_skips_without_writing` passes **unmodified**,
+- [x] `/usr/bin/python3 -m py_compile src/*.py` — clean.
+- [x] Existing `test_named_session_socket_skips_without_writing` passes **unmodified**,
       proving backward compatibility.
-- [ ] A pre-existing flat config (`workspaceFile` only, no `sessions`) with
+- [x] A pre-existing flat config (`workspaceFile` only, no `sessions`) with
       `HERDR_SOCKET_PATH` unset still writes, and with
       `HERDR_SOCKET_PATH=/x/.config/herdr/sessions/other/herdr.sock` still skips.
-- [ ] With a two-entry `sessions` map and `HERDR_VSCODE_SYNC_FAKE_SNAPSHOT` pointed at
+- [x] With a two-entry `sessions` map and `HERDR_VSCODE_SYNC_FAKE_SNAPSHOT` pointed at
       `test/fixtures/snapshot.json`, running once per session socket writes **two
       different** files and neither run touches the other's.
-- [ ] `./bin/sync --doctor` under a named session socket names the resolved session and
+- [x] `./bin/sync --doctor` under a named session socket names the resolved session and
       prints the full map.
-- [ ] A config whose two entries share one `workspaceFile` exits non-zero and names both
+- [x] A config whose two entries share one `workspaceFile` exits non-zero and names both
       sessions and the path.
 
 ## Relevant Files
@@ -175,3 +175,29 @@ read from whichever socket invoked the hook, which already scopes it to one sess
   That is the premise of the whole feature, not a gap.
 - A session's Spaces are visible only through its own server's `herdr api snapshot`, so
   there is no cross-session leakage to defend against beyond the shared config file.
+
+## Implementation corrections
+
+Two things the plan got wrong, recorded so the next reader trusts the numbers:
+
+- **The test baseline was 106, not 147.** `README.md` claimed 147 and this plan repeated
+  it; `unittest discover` actually ran 106 before any change. The claim was stale, not a
+  regression — no tests were removed. After this work: **139 tests**. Both the README and
+  the validation item now say 139.
+- **One existing test did need editing**, contrary to "adding a field is safe."
+  `test_cli.TestSyncRun.test_rewrites_then_reports_unchanged` asserted
+  `"reason=action mode=mirror"` as one adjacent substring, which the new `session=` field
+  splits. Updated to `"reason=action session=default mode=mirror"`. The important one —
+  `test_named_session_socket_skips_without_writing`, the backward-compatibility proof —
+  did pass unmodified, as predicted.
+
+`test/_support.py` was **not** touched. `FakeConfig` only needs `mode` and
+`pinned_folders`, which `compute_folders` is still the sole consumer of; the folder tests
+never see a session. The Relevant Files entry was conditional and the condition did not
+hold.
+
+Verified beyond the automated suite, against `test/fixtures/snapshot-portable.json` with
+two mapped sessions: `work` (inheriting `mode=mirror`) wrote 3 folders and left `oss`
+byte-identical; `oss` (entry-level `mode=active`) then wrote 2 folders to its own file;
+the unmapped `default` session logged `skipped-session` and exited 0; a duplicated
+`workspaceFile` exited 1 naming both sessions and the shared path.

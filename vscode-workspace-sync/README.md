@@ -81,9 +81,10 @@ allowed. `config.example.json` in this directory documents every key with its de
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `workspaceFile` | string | — | **Required.** Absolute path to the `.code-workspace` file. `~` is expanded. |
+| `workspaceFile` | string | — | Absolute path to the `.code-workspace` file. `~` is expanded. **Required unless `sessions` is set.** |
 | `mode` | `"mirror"` \| `"active"` | `"mirror"` | Folder computation mode. |
 | `pinnedFolders` | string[] | `[]` | Absolute paths always emitted first. |
+| `sessions` | object | `{}` | One workspace file per Herdr session, keyed by session name — see [One workspace file per Herdr session](#one-workspace-file-per-herdr-session). |
 
 Two environment variables are part of the supported contract:
 
@@ -95,7 +96,7 @@ Two environment variables are part of the supported contract:
 An unknown config key is a warning, not an error. A missing config file, a missing
 `workspaceFile`, or a `workspaceFile` that does not exist is a hard failure — the plugin
 will **not** create a workspace file, because a typo in config must not leave a stray one
-behind.
+behind. So is two sessions claiming the same `workspaceFile`; see below.
 
 ## Modes
 
@@ -249,7 +250,7 @@ rather than the raw socket, per the plugin docs' portability guidance.
 Every run prints one line to stdout:
 
 ```
-vscode-workspace-sync: reason=event mode=mirror target=/path/x.code-workspace folders=3 result=wrote
+vscode-workspace-sync: reason=event session=default mode=mirror target=/path/x.code-workspace folders=3 result=wrote
 ```
 
 `result` is one of `wrote`, `unchanged`, `skipped-empty`, `skipped-session`,
@@ -283,15 +284,62 @@ There is deliberately **no `doctor` plugin action**. A plugin action's stdout go
 available, and a poor route for a diagnostic. The `sync` action stays, because you invoke
 that one for its effect and the one-line summary in the log is enough to confirm it worked.
 
-## One Herdr session at a time
+## One workspace file per Herdr session
 
 Plugin registration lives in `~/.config/herdr/plugins.json`, which is **not**
-session-scoped: a single linked plugin runs in every session's server. Two Herdr sessions
-would each compute `folders` from their own Space list and overwrite the other's.
+session-scoped: a single linked plugin runs in **every** session's server. Two Herdr
+sessions pointed at one `workspaceFile` would each compute `folders` from their own Space
+list and overwrite the other's.
 
-The guard: the plugin only syncs for the **default** session (a `$HERDR_SOCKET_PATH`
-outside `.../sessions/<name>/`); other sessions log `skipped-session` and exit 0.
-`--doctor` reports the socket it saw.
+With no `sessions` key, that is settled bluntly: only the **default** session syncs.
+Named sessions log `skipped-session` and exit 0 — whether or not the default session is
+also running.
+
+`sessions` gives each one its own file instead, keyed by the name from
+`herdr session list`:
+
+```jsonc
+{
+  "sessions": {
+    "default": { "workspaceFile": "~/code/main.code-workspace" },
+    "work":    { "workspaceFile": "~/code/work.code-workspace",
+                 "pinnedFolders": ["~/code/work"] },
+    "oss":     { "workspaceFile": "~/code/oss.code-workspace", "mode": "active" }
+  }
+}
+```
+
+The session name comes from `$HERDR_SOCKET_PATH` — no subprocess, since the hook
+environment already carries it:
+
+| Socket | Session |
+| --- | --- |
+| unset | `default` |
+| `~/.config/herdr/herdr.sock` | `default` |
+| `~/.config/herdr/sessions/probe/herdr.sock` | `probe` |
+
+Resolution is four rules, in order:
+
+1. Resolve the session name.
+2. **`sessions[name]`**, if present. Its `workspaceFile` is required and is never
+   inherited from the top level; `mode` and `pinnedFolders` fall back to the top-level
+   values unless the entry sets them.
+3. Otherwise the **top-level** config — but only for the `default` session.
+4. Otherwise nothing applies: log `skipped-session` and exit 0.
+
+`"default"` is a legal key and wins over the top-level config, so a multi-session setup
+can live entirely inside `sessions` and omit the top-level `workspaceFile`. Conversely,
+with no `sessions` key rules 3 and 4 are exactly the single-session behaviour above, so
+an existing config keeps working untouched.
+
+Two entries resolving to the same `workspaceFile` — or one entry colliding with a
+top-level file still reachable by rule 3 — is a **hard error** naming both sessions. That
+collision is the precise failure this map exists to prevent, so it fails loudly at load
+rather than flapping at runtime.
+
+`HERDR_VSCODE_SYNC_WORKSPACE_FILE` overrides all of it, including a rule-4 skip, which is
+what makes it usable to drive a named session by hand. `--doctor` reports the socket, the
+resolved session, which rule matched, and the whole map.
 
 ## Herdr JSON shapes
 
@@ -380,7 +428,7 @@ test a fix.
 
 ```sh
 cd vscode-workspace-sync
-/usr/bin/python3 -m unittest discover -s test -v     # 147 tests, stdlib unittest only
+/usr/bin/python3 -m unittest discover -s test -v     # 139 tests, stdlib unittest only
 /usr/bin/python3 -m py_compile src/*.py              # the syntax gate
 ```
 

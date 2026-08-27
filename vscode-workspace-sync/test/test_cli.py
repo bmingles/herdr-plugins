@@ -130,7 +130,7 @@ class TestSyncRun(CliCase):
         code, out, errout = self.run_sync(["--reason", "action"])
         self.assertEqual(code, 0, errout)
         self.assertIn("result=wrote", out)
-        self.assertIn("reason=action mode=mirror", out)
+        self.assertIn("reason=action session=default mode=mirror", out)
         with open(target) as fh:
             parsed = jsonc.loads(fh.read())
         self.assertEqual(
@@ -275,4 +275,141 @@ class TestDoctor(CliCase):
             self.assertIn(expected, out)
         self.assertIn("result=doctor", out)
         with open(target) as fh:
+            self.assertEqual(fh.read(), before)
+
+
+class TestSessionMapping(CliCase):
+    """End-to-end proof that two Herdr sessions drive two workspace files.
+
+    The whole point of the `sessions` map: plugin registration is global, so every
+    session's server runs this plugin, and each must write only its own file.
+    """
+
+    def session_env(self, name):
+        return {"HERDR_SOCKET_PATH": "/x/.config/herdr/sessions/%s/herdr.sock" % name}
+
+    def two_targets(self):
+        return self.scratch("example.code-workspace"), self.scratch(
+            "canonical.code-workspace"
+        )
+
+    def folders_of(self, path):
+        with open(path) as fh:
+            return jsonc.loads(fh.read()).get("folders")
+
+    def test_named_session_with_a_mapping_writes_its_own_file(self):
+        work, _ = self.two_targets()
+        self.write_config({"sessions": {"work": {"workspaceFile": work}}})
+        code, out, errout = self.run_sync(extra=self.session_env("work"))
+        self.assertEqual(code, 0, errout)
+        self.assertIn("result=wrote", out)
+        self.assertIn("session=work", out)
+        self.assertEqual(
+            self.folders_of(work),
+            [{"path": "/usr/share"}, {"path": "/usr/lib", "name": "the-libs"}],
+        )
+
+    def test_named_session_without_a_mapping_writes_nothing(self):
+        work, other = self.two_targets()
+        self.write_config({"sessions": {"work": {"workspaceFile": work}}})
+        with open(work) as fh:
+            before = fh.read()
+        code, out, errout = self.run_sync(extra=self.session_env("play"))
+        self.assertEqual(code, 0, errout)
+        self.assertIn("result=skipped-session", out)
+        self.assertIn("session=play", out)
+        with open(work) as fh:
+            self.assertEqual(fh.read(), before)
+
+    def test_two_sessions_write_two_different_files_and_never_the_other_s(self):
+        work, oss = self.two_targets()
+        self.write_config(
+            {
+                "sessions": {
+                    "work": {"workspaceFile": work},
+                    "oss": {"workspaceFile": oss},
+                }
+            }
+        )
+        with open(oss) as fh:
+            oss_before = fh.read()
+
+        code, out, errout = self.run_sync(extra=self.session_env("work"))
+        self.assertEqual(code, 0, errout)
+        self.assertIn("result=wrote", out)
+        self.assertIn(work, out)
+        # The `work` run must not have touched `oss` at all.
+        with open(oss) as fh:
+            self.assertEqual(fh.read(), oss_before)
+
+        code, out, errout = self.run_sync(extra=self.session_env("oss"))
+        self.assertEqual(code, 0, errout)
+        self.assertIn("result=wrote", out)
+        self.assertIn(oss, out)
+
+        self.assertEqual(self.folders_of(work), self.folders_of(oss))
+        self.assertNotEqual(work, oss)
+
+    def test_default_session_still_uses_the_top_level_file(self):
+        top, work = self.two_targets()
+        self.write_config(
+            {"workspaceFile": top, "sessions": {"work": {"workspaceFile": work}}}
+        )
+        code, out, errout = self.run_sync()
+        self.assertEqual(code, 0, errout)
+        self.assertIn("session=default", out)
+        self.assertIn("result=wrote", out)
+        self.assertIn(top, out)
+
+    def test_env_override_beats_an_unmapped_session(self):
+        work, forced = self.two_targets()
+        self.write_config({"sessions": {"work": {"workspaceFile": work}}})
+        extra = dict(self.session_env("play"))
+        extra["HERDR_VSCODE_SYNC_WORKSPACE_FILE"] = forced
+        code, out, errout = self.run_sync(extra=extra)
+        self.assertEqual(code, 0, errout)
+        self.assertIn("result=wrote", out)
+        self.assertIn(forced, out)
+
+    def test_duplicate_workspace_file_exits_non_zero_and_names_both_sessions(self):
+        work, _ = self.two_targets()
+        self.write_config(
+            {
+                "sessions": {
+                    "work": {"workspaceFile": work},
+                    "oss": {"workspaceFile": work},
+                }
+            }
+        )
+        code, out, errout = self.run_sync(extra=self.session_env("work"))
+        self.assertNotEqual(code, 0)
+        self.assertIn("work", errout)
+        self.assertIn("oss", errout)
+
+    def test_doctor_names_the_session_and_prints_the_whole_map(self):
+        work, oss = self.two_targets()
+        self.write_config(
+            {
+                "sessions": {
+                    "work": {"workspaceFile": work},
+                    "oss": {"workspaceFile": oss},
+                }
+            }
+        )
+        code, out, errout = self.run_sync(["--doctor"], extra=self.session_env("work"))
+        self.assertEqual(code, 0, errout)
+        for expected in ("session        : work", "session map", "<- this session",
+                         work, oss, "computed folders"):
+            self.assertIn(expected, out)
+
+    def test_doctor_on_an_unmapped_session_explains_and_writes_nothing(self):
+        work, _ = self.two_targets()
+        self.write_config({"sessions": {"work": {"workspaceFile": work}}})
+        with open(work) as fh:
+            before = fh.read()
+        code, out, errout = self.run_sync(["--doctor"], extra=self.session_env("play"))
+        self.assertEqual(code, 0, errout)
+        self.assertIn("SKIP", out)
+        self.assertIn("result=skipped-session", out)
+        with open(work) as fh:
             self.assertEqual(fh.read(), before)
