@@ -33,6 +33,10 @@ class TransitionJournal(object):
         status w4:p2 idle -> working (was idle for 8.4s)
 
     The `was idle for Ns` on a return to `working` *is* the false-idle gap.
+
+    These are logged at **info**, deliberately. At `debug` the measurement only existed
+    when someone remembered to turn it on, and the first real multi-hour run recorded 28
+    grace releases and not one gap duration.
     """
 
     __slots__ = ("clock", "since")

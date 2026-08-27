@@ -241,28 +241,23 @@ rule matched. `idle` there is an absence of evidence, not evidence the agent sto
 `idleGraceSec` is shorter than the longest such gap, the machine can sleep mid-task —
 the exact thing this plugin exists to prevent.
 
-At `"logLevel": "debug"` the daemon records every status change with the duration of the
-status it left:
+The daemon records every status change with the duration of the status it left, at
+`info` — so a normal run collects this with no configuration at all:
 
 ```
-2026-08-27T09:12:03-05:00 debug status w4:p2 working -> idle (was working for 41.2s)
-2026-08-27T09:12:11-05:00 debug status w4:p2 idle -> working (was idle for 8.4s)
+2026-08-27T09:12:03-05:00 info  status w4:p2 working -> idle (was working for 41.2s)
+2026-08-27T09:12:11-05:00 info  status w4:p2 idle -> working (was idle for 8.4s)
 ```
 
 A `idle -> working (was idle for Ns)` line **inside** a task you know was running the
 whole time is a false-idle gap of N seconds.
 
-Turn it on, restart the daemon so it re-reads the config (it is long-running and holds
-its settings from startup), then work normally for a few real tasks:
+These were originally `debug`, which turned out to be a mistake: the measurement only
+existed when someone remembered to enable it, so the first five hours of real use logged
+28 grace releases and not one gap. They are one line per pane status change — a few
+hundred a day against a 1 MB cap — so they are worth having always.
 
-```sh
-mkdir -p "$(herdr plugin config-dir agent-caffeinate)"
-echo '{"logLevel": "debug"}' > "$(herdr plugin config-dir agent-caffeinate)/config.json"
-./bin/agent-caffeinate daemon --restart
-./bin/agent-caffeinate status          # prints the log path; confirm it is running
-```
-
-Then rank the gaps, largest first:
+Just work normally for a few real tasks, then rank the gaps, largest first:
 
 ```sh
 grep -h 'idle -> working' ~/.local/state/herdr/plugins/agent-caffeinate/*/daemon.log* \
@@ -281,11 +276,28 @@ working, which is exactly what the plugin should treat as idle. Only gaps *withi
 you know was running continuously are false idles, and only those set the floor for
 `idleGraceSec`.
 
-Set `idleGraceSec` comfortably above the largest value you see. If your gaps are all
-small, a shorter grace such as 30 is safe; the default is 60 because the cost of being
-too long is nearly zero (we hold `-i -s`, so the display still sleeps and locks, and all
-you delay is the start of macOS's own multi-minute idle countdown) while the cost of
-being too short is an interrupted agent.
+Set `idleGraceSec` comfortably above the largest value you see. The cost of being too
+long is nearly zero — we hold `-i -s`, so the display still sleeps and locks, and all you
+delay is the start of macOS's own multi-minute idle countdown — while the cost of being
+too short is an interrupted agent. So err generous.
+
+**Why the default is 60.** A five-hour run on 2026-08-27 across two Herdr sessions
+produced 28 grace releases, 27 of them followed by an agent working again. Two of those
+gaps were **62 s**: the assertion was released on the 60 s deadline and re-taken on the
+very next poll. Nothing in that data suggests 60 is too generous, and two observations
+suggest it is close to the edge, so 60 stands. That run could not measure gaps *shorter*
+than the grace, because sub-grace gaps produced no log line — which is exactly why the
+status lines are now at `info`. Whether a lower value such as 30 is safe is still
+unmeasured; do not lower it without gaps to point at.
+
+**A trap worth naming.** `workspace-time-tracker`'s `entries.jsonl` looks like
+independent corroboration — a caffeinate gap falling inside a tracked entry looks like
+proof the agent was busy. It is not. The tracker's active statuses default to `working`
+too, and it deliberately never screen-hashes agent panes, so during a caffeinate gap its
+entry can only be kept alive by a plain shell's changing screen or by a focus change.
+An entry spanning a gap is evidence **you were at the keyboard**, not that the agent was
+working — and being at the keyboard answering a permission prompt is precisely the
+`blocked` case below. Use the status lines, which name the status.
 
 Note `blocked` is not an active status, so an agent waiting at a permission prompt is
 already counting down. That is deliberate — nothing is in flight — but it means the grace

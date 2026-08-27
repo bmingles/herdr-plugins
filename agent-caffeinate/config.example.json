@@ -24,6 +24,9 @@
   // ["caffeinate", "-d", "-i", "-s"] -- but see the README on why that is not default.
   "inhibitorCommand": null,
 
-  // "error" | "warn" | "info" | "debug"
+  // "error" | "warn" | "info" | "debug". Nothing is emitted at "debug" today: the
+  // per-pane status transitions used to tune idleGraceSec are logged at "info", so a
+  // normal run collects them. The level exists to quieten the log ("warn" drops the
+  // transitions and the inhibitor start/stop lines), not to unlock anything.
   "logLevel": "info"
 }

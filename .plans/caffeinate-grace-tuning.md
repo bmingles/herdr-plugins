@@ -32,21 +32,22 @@ the data and must not be mistaken for false idles.
 
 ## Prerequisite: collect the data
 
-The user runs `agent-caffeinate` at `"logLevel": "debug"` for a normal working day. The
-procedure is in
-[`agent-caffeinate/README.md`](../agent-caffeinate/README.md#choosing-idlegracesec-from-data-not-vibes)
-— note it requires `daemon --restart`, since the daemon reads config only at startup.
+The user runs `agent-caffeinate` for a normal working day. No configuration is needed —
+the per-pane status transitions are logged at `info`, which is the default level. (They
+were at `debug` until run 1 proved that unworkable; see `## Run 1` below.)
 
 **Before analysing, confirm the data is real:**
 
 ```sh
 ls -la ~/.local/state/herdr/plugins/agent-caffeinate/*/daemon.log*
-grep -c 'debug status' ~/.local/state/herdr/plugins/agent-caffeinate/*/daemon.log*
+grep -ch 'status .* -> ' ~/.local/state/herdr/plugins/agent-caffeinate/*/daemon.log*
 ```
 
-Zero `debug status` lines means debug logging was never on, or the daemon was not
-restarted after the config change. Say so and stop — do **not** analyse an empty set and
-report a conclusion.
+Zero transition lines means the running daemon predates the `info` change, or was started
+before it and never restarted (the daemon holds its settings from startup). Check that the
+**installed** copy carries the change — `plugins.json` names the `plugin_root` actually in
+use, which is not this repo — then `daemon --restart`. Say so and stop; do **not** analyse
+an empty set and report a conclusion.
 
 ## Log format
 
@@ -114,12 +115,27 @@ grep -h 'idle -> working' ~/.local/state/herdr/plugins/agent-caffeinate/*/daemon
   genuinely required; do not guess.
 - **Many** → keep 60, and say why.
 
-### 4. Corroborate with the time tracker, if it is installed
+### 4. Corroborate with the time tracker — but read the caveat first
+
+**This step does not do what it was written to do.** Run 1 established why, from
+`workspace-time-tracker/src/activity.py`:
+
+- the tracker's `active_statuses` also default to `["working"]`, so its agent signal is
+  the *same* signal `agent-caffeinate` uses — not an independent one; and
+- it **never screen-hashes agent panes** (deliberately: a spinner defeats the hash).
+
+So during a caffeinate gap, when no pane is `working`, a tracker entry can only be kept
+alive by a plain shell's changing screen or by a focus change. An entry spanning a gap is
+therefore evidence **the human was at the keyboard**, not that the agent was working —
+and a human at the keyboard answering a permission prompt is exactly the `blocked` case
+this plan warns must not be counted as a false idle. It is weak circumstantial evidence at
+best, and it points the wrong way as often as the right one.
+
+Use the transition lines instead: they name the status, so `idle` and `blocked` are
+distinguishable. Run the query below only for context on what was in focus, and never
+promote a spanning entry to a confirmed false idle on its own.
 
 `workspace-time-tracker` writes `entries.jsonl` with the Spaces that were active and when.
-An `idle -> working` gap falling **inside** a tracked entry is far more likely to be a
-false idle than one falling in a gap between entries. Independent evidence, and it does
-not depend on anyone remembering their day.
 
 ```sh
 python3 -c "
@@ -145,9 +161,49 @@ was inconclusive rather than lowering on weak evidence.
 Whatever is chosen, the reasoning and the observed numbers go into the README so the next
 person does not re-litigate it.
 
+## Run 1 — 2026-08-27, inconclusive (instrument not armed)
+
+**The measurement did not happen.** `logLevel` was the default `info` and the transition
+lines were at `debug`, so both daemon logs held zero of them. The tuning question is
+**still open**; the default stays at **60**.
+
+What the `info` lines did show, over 11:48:54–16:52:34 (~5 h 04 m) across two Herdr
+sessions (`961cd3a7037f` default socket, `387573b5e65e` vscode session socket), `grace=60`
+throughout with no mid-day change:
+
+- 28 grace releases; 27 followed by an agent working again, giving 27 measurable
+  "nothing working for this long, then working" spans.
+- Distribution: `[60,70)` **2**, `[70,90)` 2, `[90,120)` 4, `[120,300)` 10, `[300,∞)` 9.
+- The two in `[60,70)` were both **62 s** — released on the 60 s deadline, re-taken on the
+  next 2 s poll (13:58:24→13:59:26 and 14:00:04→14:01:06, session `961cd3a7037f`).
+
+**The trap this run exposed.** Step 3's grep would have printed `0 gap(s) in [30,60)` and
+that would have looked like a green light for 30. It is not: a gap *shorter* than the
+grace produces **no log line at all** at `info`, so the entire decision band is invisible.
+Zero there was the absence of the instrument, not evidence.
+
+**Fixed for run 2:** the transition lines moved from `debug` to `info` (`src/main.py`), so
+a default-configured run collects them. Locked in by
+`test_e2e.py::test_status_transitions_are_logged_at_info`. Step 4's flaw was found in the
+same pass — see the caveat now in that section.
+
+**Read the 62 s pair before lowering anything.** Twice in five hours the grace was already
+marginal. Whether those two were false idles or `blocked` prompt-waits is exactly what run
+2's transition lines will say.
+
 ## Checklist
 
-- [ ] Confirm `debug status` lines exist; stop and report if not
+### Run 1 — done
+- [x] Confirm transition lines exist; stop and report if not — **zero found, reported**
+- [x] Note the `grace=` value(s) from `daemon start` lines — 60.0 s, both sessions
+- [x] Produce the ranked gap list (step 1) — 27 spans, from release/re-hold pairs
+- [x] Count and list gaps in `[30, 60)` (step 3) — **unmeasurable at `info`**; 2 at 62 s
+- [x] Cross-reference against `entries.jsonl` (step 4) — done, and found unsound; see § 4
+- [x] Move the transition lines to `info` so run 2 can measure the decision band
+- [x] Record run 1's numbers and the `60` rationale in `agent-caffeinate/README.md`
+
+### Run 2 — blocked on the installed copy carrying the `info` change
+- [ ] Confirm transition lines exist; stop and report if not
 - [ ] Note the `grace=` value(s) from `daemon start` lines
 - [ ] Produce the ranked gap list (step 1)
 - [ ] Count and list gaps in `[30, 60)` (step 3)
@@ -167,8 +223,9 @@ person does not re-litigate it.
 - [ ] The report to the user states **how many** gaps were observed, over **how long** a
       period — a conclusion from three gaps in one hour is not the same as thirty over a
       day, and must not be presented as though it were
-- [ ] Every gap cited as a false idle is either confirmed by the user or corroborated by
-      a `entries.jsonl` entry spanning it
+- [ ] Every gap cited as a false idle is confirmed by the user, or by a transition line
+      showing `idle` (not `blocked`) for the whole span. An `entries.jsonl` entry spanning
+      the gap is **not** sufficient — see § 4
 - [ ] If the default changed: `python3 -c "import sys; sys.path.insert(0,'src'); import config; print(config.Config().idle_grace_sec)"` prints the new value
 - [ ] `cd agent-caffeinate/test && python3 -m unittest discover -s .` — all pass
 - [ ] `./bin/agent-caffeinate doctor` shows the new `idleGraceSec` with no config file
@@ -180,7 +237,10 @@ person does not re-litigate it.
 | --- | --- |
 | `agent-caffeinate/src/config.py` | `Config.idle_grace_sec` default, if the data supports a change. |
 | `agent-caffeinate/config.example.json` | The commented default. |
-| `agent-caffeinate/README.md` | Replace the rationale with the measured numbers. |
+| `agent-caffeinate/README.md` | Replace the rationale with the measured numbers. **Done in run 1.** |
+| `agent-caffeinate/src/main.py` | Transition lines at `info`, not `debug`. **Done in run 1.** |
+| `agent-caffeinate/src/tracker.py` | `TransitionJournal` docstring records why `info`. **Done in run 1.** |
+| `agent-caffeinate/test/test_e2e.py` | `test_status_transitions_are_logged_at_info`. **Done in run 1.** |
 | `agent-caffeinate/test/test_config.py` | `test_defaults_without_a_file` asserts the default. |
 | `.plans/PLAN.md` | Status + phase row. |
 | `docs/herdr-daemon-facts.md` | Only if the run reveals something about detection behaviour worth recording beyond this decision. |

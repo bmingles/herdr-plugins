@@ -8,10 +8,16 @@ beside it; completed plans move to `.plans/archived/`.
 ### Pending
 
 - [caffeinate-grace-tuning](caffeinate-grace-tuning.md) — decide `agent-caffeinate`'s
-  default `idleGraceSec` (currently 60; is 30 safe?) from a day of debug logs rather than
-  judgement. **Written to be picked up cold** — it carries the log format, the analysis
-  commands, the classification that avoids relying on anyone's memory, and the decision
-  rule. Blocked only on the user running the plugin for a day at `"logLevel": "debug"`.
+  default `idleGraceSec` (currently 60; is 30 safe?) from measured false-idle gaps rather
+  than judgement. **Written to be picked up cold** — it carries the log format, the
+  analysis commands, the classification that avoids relying on anyone's memory, and the
+  decision rule. **Run 1 (2026-08-27) was inconclusive**: the transition lines were at
+  `debug` and `logLevel` was the default, so 5 h of real use logged 28 grace releases and
+  zero gap durations. Two 62 s gaps *were* visible from the release/re-hold pairs, so 60
+  is already marginal and **must not** be lowered on current evidence. Fixed for run 2 —
+  transition lines moved to `info` (85 tests pass), and step 4's `entries.jsonl`
+  corroboration was found unsound and rewritten. See `## Run 1` in the plan. Now blocked
+  on the **installed** plugin copy carrying the `info` change, then a normal working day.
 
 - [herdr-daemon-discovery](herdr-daemon-discovery.md) — host probes answering the
   unknowns both new plugins depend on: does a daemon spawned from `[[startup]]` survive,
@@ -71,5 +77,5 @@ beside it; completed plans move to `.plans/archived/`.
 | 3 | [herdr-daemon-discovery](herdr-daemon-discovery.md) | Prove the `[[startup]]` daemon model, `events.subscribe` framing, and a plain-shell activity signal on the host | in progress |
 | 4 | [agent-caffeinate](agent-caffeinate.md) | Hold a sleep-inhibiting assertion while agents are working, release it after a minute idle | complete |
 | 5 | [workspace-time-tracker](workspace-time-tracking.md) | Track time spent per Space, stopping on switch and on inactivity | complete |
-| 6 | [caffeinate-grace-tuning](caffeinate-grace-tuning.md) | Set idleGraceSec from measured false-idle gaps |  |
+| 6 | [caffeinate-grace-tuning](caffeinate-grace-tuning.md) | Set idleGraceSec from measured false-idle gaps | in progress — run 1 inconclusive, instrument fixed, awaiting run 2 |
 | 7 | [vscode-sync-session-mapping](archived/vscode-sync-session-mapping.md) | Map each Herdr session name to its own VS Code workspace file | complete |

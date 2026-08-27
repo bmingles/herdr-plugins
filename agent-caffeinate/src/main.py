@@ -100,7 +100,12 @@ def run_loop(cfg, socket_path, paths, log, stop_flag):
                 continue
 
             for line in journal.observe(statuses):
-                log.debug(line)
+                # info, not debug: these lines are the only record of how long a
+                # working agent falsely reads as idle, and so the only way to ever
+                # tune idleGraceSec from data. Gating them behind a non-default level
+                # meant a normal run collected nothing. Volume is one line per pane
+                # status change -- a few hundred a day.
+                log.info(line)
 
             action = tracker.update(statuses)
             if action == START:

@@ -96,6 +96,17 @@ class DaemonHarness(TempDirCase):
     def count(self, prefix):
         return len([l for l in self.lines() if l.startswith(prefix)])
 
+    def daemon_log(self):
+        """The daemon's own log, wherever the session key put it."""
+        import daemonize
+        path = os.path.join(self.path("state"),
+                            daemonize.session_key(self.sock_path), "daemon.log")
+        try:
+            with open(path) as fh:
+                return [l.rstrip("\n") for l in fh if l.strip()]
+        except IOError:
+            return []
+
 
 class DaemonE2ETest(DaemonHarness):
     # -- the core behaviour --------------------------------------------------
@@ -114,6 +125,30 @@ class DaemonE2ETest(DaemonHarness):
         self.assertGreaterEqual(held_for, GRACE * 0.8,
                                 "released before the grace period elapsed")
         self.assertLess(held_for, GRACE + 3.0, "released far too late")
+
+    def test_status_transitions_are_logged_at_info(self):
+        """The false-idle record must survive a default-configured run.
+
+        These lines were `debug` once, so a normal day collected the inhibitor
+        start/stop lines and no gap durations at all -- leaving `idleGraceSec`
+        untunable from real use. Keep them at `info`.
+        """
+        self.start_daemon(HERDR_CAFFEINATE_LOG_LEVEL="info")
+        self.server.set_statuses({"w1:p1": "working"})
+        self.assertTrue(wait_for(lambda: self.count("START") == 1))
+        self.server.set_statuses({"w1:p1": "idle"})
+        self.assertTrue(wait_for(lambda: self.count("STOP") == 1))
+        self.server.set_statuses({"w1:p1": "working"})
+        self.assertTrue(wait_for(lambda: self.count("START") == 2))
+
+        gaps = wait_for(lambda: [l for l in self.daemon_log()
+                                 if "status w1:p1 idle -> working" in l])
+        self.assertTrue(gaps, "no idle -> working line in the log at info level:\n%s"
+                              % "\n".join(self.daemon_log()))
+        self.assertIn("info", gaps[0].split(" ")[1],
+                      "transition line is not at info level: %r" % gaps[0])
+        self.assertIn("was idle for", gaps[0],
+                      "transition line carries no gap duration: %r" % gaps[0])
 
     def test_repeated_identical_statuses_start_it_once(self):
         self.start_daemon()
