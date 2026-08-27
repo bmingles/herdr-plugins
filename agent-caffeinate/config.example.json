@@ -1,0 +1,29 @@
+{
+  // Every key here is OPTIONAL and shown at its default. The plugin works with no
+  // config file at all -- create one only to change something.
+
+  // Seconds with no working agent before the sleep assertion is released.
+  "idleGraceSec": 60,
+
+  // How often the whole session is polled. A poll is a single ~0.35ms socket call, so
+  // this is cheap; 2s keeps the assertion responsive without being busy.
+  "pollIntervalSec": 2,
+
+  // Agent statuses that count as "working". `blocked` is deliberately absent: it means
+  // the agent is waiting on a human, so no work is in flight to protect. Add it if you
+  // would rather the machine stay awake while an agent waits for your answer.
+  "activeStatuses": ["working"],
+
+  // null -> the platform default:
+  //   macOS: ["caffeinate", "-i", "-s"]
+  //   Linux: ["systemd-inhibit", "--what=idle:sleep",
+  //           "--why=herdr agent working", "--mode=block", "sleep", "infinity"]
+  //
+  // Any long-running command works: it is started when an agent begins working and
+  // killed when the grace period expires. To keep the DISPLAY awake as well, use
+  // ["caffeinate", "-d", "-i", "-s"] -- but see the README on why that is not default.
+  "inhibitorCommand": null,
+
+  // "error" | "warn" | "info" | "debug"
+  "logLevel": "info"
+}

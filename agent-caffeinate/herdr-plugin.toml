@@ -1,0 +1,35 @@
+id = "agent-caffeinate"
+name = "Agent Caffeinate"
+version = "0.1.0"
+min_herdr_version = "0.8.0"
+description = "Keep the machine awake while coding agents are working"
+platforms = ["macos", "linux"]
+
+# No [[build]] block. Python source run in place, so `herdr plugin install` has nothing
+# to compile.
+
+[[startup]]
+command = ["./bin/agent-caffeinate", "daemon"]
+
+# Self-heal only. The daemon polls on its own; this exists so a daemon that died, or a
+# plugin linked mid-session, recovers on the next navigation instead of at the next
+# server boot. `--ensure` exits immediately when the session lock is held, so the cost is
+# one short process spawn per workspace focus.
+[[events]]
+on = "workspace.focused"
+command = ["./bin/agent-caffeinate", "daemon", "--ensure"]
+
+# `pane.agent_status_changed` is deliberately NOT hooked. It fires ~0.85/s per agent pane
+# (~8% of a core each), and the daemon gets the same information from a 0.35 ms
+# `session.snapshot` poll. See docs/herdr-daemon-facts.md.
+
+[[actions]]
+id = "restart"
+title = "Restart caffeinate daemon"
+contexts = ["global"]
+command = ["./bin/agent-caffeinate", "daemon", "--restart"]
+
+# No `status` action on purpose. A plugin action's stdout reaches the user only through
+# `herdr plugin log list`, JSON-escaped -- a poor channel for a diagnostic. Run
+# `./bin/agent-caffeinate status` directly instead. `restart` is an operation, not a
+# diagnostic, so its output going unread is fine.

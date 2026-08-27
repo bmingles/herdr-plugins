@@ -7,9 +7,31 @@ beside it; completed plans move to `.plans/archived/`.
 
 ### Pending
 
-_None._
+- [herdr-daemon-discovery](herdr-daemon-discovery.md) — host probes answering the
+  unknowns both new plugins depend on: does a daemon spawned from `[[startup]]` survive,
+  what does a long-lived `events.subscribe` connection actually look like, and what
+  signal proves a human is active in a plain shell. Deliverable:
+  `docs/herdr-daemon-facts.md`. **Must run first** — probe A is go/no-go for the design
+  in both plans below.
+
+- [workspace-time-tracker](workspace-time-tracking.md) — Herdr plugin recording time per
+  Space: entries open on `workspace.focused`, close on switch, and close **backdated to
+  the last activity** after a minute of quiet. Activity is agent status plus a polled
+  per-pane token, because probe 18 proved a plain shell emits no events at all. Appends
+  JSONL; `bin/track report` reads it back. Depends on `agent-caffeinate` for the shared
+  daemon plumbing.
 
 ### Completed
+
+- [agent-caffeinate](agent-caffeinate.md) — implemented in `agent-caffeinate/`.
+  Holds `caffeinate -i -s` while any agent reports `working`, releases 60 s after the
+  last one stops. **58 tests pass**, and it was additionally verified against a **real
+  Herdr server** in the devcontainer with only the inhibitor faked: startup hook returns
+  in 42 ms, a real `working` status starts the inhibitor, `idle` releases it after the
+  grace, and stopping the server makes the daemon release and exit rather than orphan.
+  Discovery replaced the planned subscription with a poll — see `## Discovery
+  corrections` in the plan. Unverified on macOS: only that `caffeinate` itself behaves as
+  documented, which the flags make uncontroversial.
 
 - [vscode-workspace-sync](archived/vscode-workspace-sync.md) — Herdr plugin that keeps a
   VS Code multi-root `.code-workspace` file in sync with Herdr Spaces. Implemented in
@@ -29,3 +51,6 @@ _None._
 | --- | --- | --- | --- |
 | 1 | [vscode-workspace-sync-discovery](archived/vscode-workspace-sync-discovery.md) | Probe Herdr JSON shapes, plugin event delivery, server PATH, and VS Code folder live-reload on the host | complete |
 | 2 | [vscode-workspace-sync](archived/vscode-workspace-sync.md) | Mirror Herdr Spaces into a VS Code workspace file's `folders` array | complete |
+| 3 | [herdr-daemon-discovery](herdr-daemon-discovery.md) | Prove the `[[startup]]` daemon model, `events.subscribe` framing, and a plain-shell activity signal on the host | in progress |
+| 4 | [agent-caffeinate](agent-caffeinate.md) | Hold a sleep-inhibiting assertion while agents are working, release it after a minute idle | complete |
+| 5 | [workspace-time-tracker](workspace-time-tracking.md) | Track time spent per Space, stopping on switch and on inactivity |  |

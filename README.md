@@ -8,6 +8,7 @@ coding agents.
 | Plugin | What it does |
 | --- | --- |
 | [`vscode-workspace-sync/`](vscode-workspace-sync/) | Keeps the `folders` array of a VS Code multi-root `.code-workspace` file in sync with your Herdr Spaces — create, close, rename or reorder a Space and the VS Code explorer follows, with no window reload. Python 3.9+, standard library only, no build step. |
+| [`agent-caffeinate/`](agent-caffeinate/) | Keeps your machine awake for exactly as long as your coding agents are working, and lets it sleep a minute after they stop. No config required. Python 3.9+, standard library only, no build step. |
 
 Install a plugin straight from this repo:
 
@@ -36,6 +37,7 @@ check it after any trigger rather than guessing.
 | --- | --- |
 | [`docs/herdr-research-notes.md`](docs/herdr-research-notes.md) | How Herdr's plugin system, socket API and agent detection actually behave, established largely by experiment. |
 | [`docs/herdr-vscode-sync-facts.md`](docs/herdr-vscode-sync-facts.md) | Pasted host output from the discovery run behind `vscode-workspace-sync`: `api snapshot` shapes, which plugin event hooks fire, the server environment, and VS Code's folder live-reload behaviour. |
+| [`docs/herdr-daemon-facts.md`](docs/herdr-daemon-facts.md) | Whether a plugin daemon survives its hook (yes) and its server (also yes, which is a problem), the real `events.subscribe` contract, and which signals actually reveal that a human is working. |
 | [`docs/example-vscode-workspace.md`](docs/example-vscode-workspace.md) | A representative `.code-workspace` file, and the primary test fixture for `vscode-workspace-sync`. |
 
 ## Skills

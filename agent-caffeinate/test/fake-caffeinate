@@ -1,0 +1,12 @@
+#!/bin/sh
+# Stands in for `caffeinate` where it does not exist (Linux, CI, this devcontainer).
+# Appends START on launch and STOP on termination, then blocks forever -- exactly the
+# lifecycle the real thing has, which is the only part the plugin depends on.
+LOG=${FAKE_CAFFEINATE_LOG:-/dev/null}
+echo "START pid=$$ at=$(date +%s) argv=$*" >> "$LOG"
+trap 'echo "STOP pid=$$ at=$(date +%s)" >> "$LOG"; exit 0' TERM INT
+# `sleep infinity` is not portable; loop in short naps so the trap fires promptly.
+while true; do
+    sleep 0.2 &
+    wait $!
+done
