@@ -33,3 +33,8 @@ command = ["./bin/agent-caffeinate", "daemon", "--restart"]
 # `herdr plugin log list`, JSON-escaped -- a poor channel for a diagnostic. Run
 # `./bin/agent-caffeinate status` directly instead. `restart` is an operation, not a
 # diagnostic, so its output going unread is fine.
+#
+# The tab bar indicator is not an action either, for the same reason: `ui.tab_bar_right`
+# runs a plain command on an interval and renders its stdout, so `bin/agent-caffeinate
+# indicator` belongs in the user's own config.toml, not here. A plugin cannot write that
+# file. See README -> Status indicator.

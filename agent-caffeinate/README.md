@@ -66,12 +66,77 @@ key with its default.
 The one people change: `"inhibitorCommand": ["caffeinate", "-d", "-i", "-s"]` to keep the
 display awake too.
 
+## Status indicator
+
+An optional `☕ caffeinate` in the Herdr tab bar, shown only while the assertion is
+actually held. Add a `command` entry to the tab bar's status area in your Herdr
+`config.toml` — point it at this plugin's `bin/agent-caffeinate`
+(`herdr plugin list --json` prints the installed path):
+
+```toml
+[ui]
+tab_bar_right = [
+  { type = "command", command = "<plugin-path>/bin/agent-caffeinate indicator",
+    interval_seconds = 5, timeout_seconds = 2 },
+]
+tab_bar_right_separator = " · "
+```
+
+| Daemon | Renders |
+| --- | --- |
+| holding the assertion | `☕ caffeinate` |
+| holding, but in dry mode (inhibitor command not on `PATH`) | `☕ caffeinate (dry)` |
+| running, not holding | nothing — `--show-idle` renders `○ caffeinate` |
+| wedged (alive, no longer making progress) | `⚠ caffeinate` |
+| not running, or one poll old and yet to report | nothing |
+
+"Nothing" is a real state rather than a blank gap: Herdr clears the entry on empty
+output, and separators appear only between *visible* entries. That is why silence is the
+default — the indicator answers "why is my machine awake", and a permanent
+`caffeinate: off` answers nothing.
+
+Flags: `--label TEXT` (default `caffeinate`), `--icon GLYPH` for the holding state,
+`--show-idle`, and `--json` for the whole state object.
+
+**It costs one file read.** The daemon already writes `daemon.json` every poll, so the
+indicator reads that and the lock file and makes **no socket call**. Measured at ~32 ms
+per run, essentially all Python interpreter startup — about 0.6% of a core at
+`interval_seconds = 5`. Raise the interval if that bothers you; the underlying state
+changes at most once per `pollIntervalSec` anyway.
+
+Three things worth knowing before you wire it up:
+
+- **Herdr plugins cannot write `config.toml`.** Installing this plugin does not create
+  the stanza above; adding it is yours to do.
+- **The entry resolves on the Herdr server**, with the same context a custom command
+  keybinding gets — including `HERDR_SOCKET_PATH`, which is how the indicator finds
+  the right session's state directory. It does *not* get `HERDR_PLUGIN_STATE_DIR`, so it
+  falls back to the default `~/.local/state/herdr/plugins/agent-caffeinate`. Correct
+  unless you have relocated Herdr's state.
+- **Assume plain text.** ANSI colour in a `tab_bar_right` command's output is not
+  documented; the emoji carries its own colour, which is why the default icon is one.
+
+### Why the tab bar and not the sidebar
+
+Herdr's other custom-text surfaces — `pane.report_metadata` and
+`workspace.report_metadata` tokens, rendered as `$name` in `ui.sidebar.*.rows` — are
+per-pane and per-Space. Caffeinate state is one fact per Herdr server, so putting it on
+every Space row would be duplicated noise. The tab bar status area is the only genuinely
+global text surface, so that is where it goes.
+
+Reusing Herdr's own agent `state_icon` is not possible, and deliberately not attempted:
+the only way to obtain one is `pane.report_agent`, which makes the reporter a **full
+lifecycle authority** and disables screen detection for that pane. This plugin reads
+`agent_status` for a living, so poisoning it to draw a glyph would break the feature.
+
 ## Commands
 
 | Command | What it does |
 | --- | --- |
 | `bin/agent-caffeinate status` | Daemon pid, uptime, whether it is holding, which panes are active, seconds until release |
 | `bin/agent-caffeinate status --json` | The same, machine-readable |
+| `bin/agent-caffeinate indicator` | One status line for a `ui.tab_bar_right` entry; empty when there is nothing to show |
+| `bin/agent-caffeinate indicator --json` | The same state, machine-readable |
 | `bin/agent-caffeinate doctor` | Resolved config, session key, whether the inhibitor command exists, live pane statuses |
 | `bin/agent-caffeinate stop` | Stop this session's daemon and release the assertion |
 | `bin/agent-caffeinate daemon --restart` | Restart it (also available as the plugin action "Restart caffeinate daemon") |
@@ -211,7 +276,7 @@ also covers "I stepped away while it was asking me something".
 cd agent-caffeinate && python3 -m unittest discover -s test
 ```
 
-58 tests, no network, no Herdr server, no macOS required. The daemon runs as a real
+84 tests, no network, no Herdr server, no macOS required. The daemon runs as a real
 subprocess against a fake Herdr socket server (`test/fake_server.py`) and a fake
 inhibitor (`test/fake-caffeinate`) that logs its own start/stop — so the spawn, kill,
 grace-period and server-death paths are all exercised for real. Timing-sensitive logic

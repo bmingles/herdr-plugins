@@ -301,6 +301,103 @@ def _read_status(paths):
         return None
 
 
+# -- status indicator ---------------------------------------------------------------
+#
+# For a `ui.tab_bar_right` entry in the user's `config.toml`. Herdr re-runs that command
+# on the server every `interval_seconds` and renders its last line, so this path must be
+# cheap and must never block: it reads the two files the daemon already maintains and
+# makes no socket call at all. Herdr also clears the entry on empty output, which is
+# exactly the rendering wanted for "nothing to say" -- so silence is the default and
+# every branch below that has nothing to report returns "".
+
+ICON_HOLDING = u"\u2615"   # coffee cup
+ICON_IDLE = u"\u25cb"      # hollow circle
+ICON_FAULT = u"\u26a0"     # warning sign
+
+
+def indicator_state(cfg, paths):
+    """What the indicator should report, read from the daemon's own state files.
+
+    ``state`` is one of ``absent`` (no live daemon), ``starting`` (holds the lock but
+    has not written a status yet), ``wedged`` (alive but no longer making progress),
+    ``idle``, or ``holding``. ``dry`` is orthogonal: it says the inhibitor command does
+    not resolve, so the daemon is tracking agents but spawning nothing.
+    """
+    info = {"state": "absent", "dry": False, "pid": None, "age": None,
+            "active_panes": [], "seconds_until_stop": None}
+
+    pid = daemonize.read_holder_pid(paths.lock)
+    if not pid or not daemonize.pid_alive(pid):
+        return info
+    info["pid"] = pid
+
+    status = _read_status(paths)
+    updated = (status or {}).get("updated_at")
+    if not isinstance(updated, (int, float)):
+        # The lock is taken but nothing has been reported. A daemon one poll into its
+        # life looks exactly like this, so it is not a fault worth drawing.
+        info["state"] = "starting"
+        return info
+
+    info["age"] = max(0.0, time.time() - updated)
+    info["dry"] = bool(status.get("dry"))
+    info["active_panes"] = list(status.get("active_panes") or [])
+    pending = status.get("seconds_until_stop")
+    if isinstance(pending, (int, float)):
+        info["seconds_until_stop"] = pending
+
+    stale_after, _confirm = _staleness_bounds(cfg)
+    if info["age"] >= stale_after:
+        # Same rule `doctor` uses. A wedged daemon's `holding` flag is whatever it was
+        # when it stopped making progress, so it is not worth rendering as fact.
+        info["state"] = "wedged"
+    elif status.get("holding"):
+        info["state"] = "holding"
+    else:
+        info["state"] = "idle"
+    return info
+
+
+def indicator_text(info, label, icon, show_idle):
+    """One line for the tab bar, or "" meaning render nothing."""
+    state = info["state"]
+    if state == "wedged":
+        return (u"%s %s" % (ICON_FAULT, label)).strip()
+    if state == "holding":
+        text = u"%s %s" % (icon, label)
+    elif state == "idle" and show_idle:
+        text = u"%s %s" % (ICON_IDLE, label)
+    else:
+        return u""
+    if info["dry"]:
+        text += u" (dry)"
+    return text.strip()
+
+
+def cmd_indicator(args):
+    env = os.environ
+    try:
+        cfg = config_mod.load(env)
+    except config_mod.ConfigError:
+        # A broken config file is `doctor`'s to report, not the tab bar's. Only the
+        # staleness bound depends on it, so fall back to defaults rather than go blind
+        # about a daemon that may well be running fine on an older, valid config.
+        cfg = config_mod.Config()
+
+    paths = Paths(config_mod.state_dir(env), sock.default_socket_path(env))
+    info = indicator_state(cfg, paths)
+    text = indicator_text(info, args.label, args.icon, args.show_idle)
+
+    if args.json:
+        payload = dict(info)
+        payload["text"] = text
+        json.dump(payload, sys.stdout)
+        sys.stdout.write("\n")
+    elif text:
+        sys.stdout.write(text + "\n")
+    return EXIT_OK
+
+
 def cmd_status(args):
     try:
         _cfg, socket_path, paths = _resolve()
@@ -421,6 +518,17 @@ def build_parser():
     st = sub.add_parser("status", help="what the daemon is doing right now")
     st.add_argument("--json", action="store_true")
     st.set_defaults(func=cmd_status)
+
+    ind = sub.add_parser("indicator",
+                         help="one status line for a ui.tab_bar_right entry")
+    ind.add_argument("--label", default="caffeinate",
+                     help="text after the icon (default: caffeinate)")
+    ind.add_argument("--icon", default=ICON_HOLDING,
+                     help="glyph shown while holding (default: %s)" % ICON_HOLDING)
+    ind.add_argument("--show-idle", action="store_true",
+                     help="also render when the daemon is running but not holding")
+    ind.add_argument("--json", action="store_true")
+    ind.set_defaults(func=cmd_indicator)
 
     doc = sub.add_parser("doctor", help="resolved config and reachability")
     doc.set_defaults(func=cmd_doctor)

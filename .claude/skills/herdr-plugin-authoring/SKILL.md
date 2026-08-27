@@ -1,6 +1,6 @@
 ---
 name: herdr-plugin-authoring
-description: "Guides authoring, linking, and debugging Herdr plugins via herdr-plugin.toml, and using the Herdr socket API for agent state and events. Use when the user wants to write or debug a Herdr plugin, add a startup or event hook, register a plugin action or plugin-owned pane, subscribe to events like pane.agent_status_changed, or call socket methods such as pane.report_agent. Keywords: herdr-plugin.toml, herdr plugin link, plugin log list, HERDR_PLUGIN_ROOT, HERDR_SOCKET_PATH, socket API, events.subscribe, report_agent, agent authority."
+description: "Guides authoring, linking, and debugging Herdr plugins via herdr-plugin.toml, and using the Herdr socket API for agent state and events. Use when the user wants to write or debug a Herdr plugin, add a startup or event hook, register a plugin action or plugin-owned pane, subscribe to events like pane.agent_status_changed, or call socket methods such as pane.report_agent. Also covers the surfaces a plugin can render custom text and status icons in: metadata tokens, sidebar rows, the tab bar status area, toasts. Keywords: herdr-plugin.toml, report_metadata, state_labels, tab_bar_right, notification.show, sidebar rows, status indicator, custom token, herdr plugin link, plugin log list, HERDR_PLUGIN_ROOT, HERDR_SOCKET_PATH, socket API, events.subscribe, report_agent, agent authority."
 ---
 
 # Authoring Herdr plugins
@@ -9,7 +9,7 @@ Herdr's plugin system is real but undocumented in the bundled `herdr` skill. A p
 is a directory with a `herdr-plugin.toml` manifest and executable commands. Herdr runs
 those commands with a rich environment describing the invocation context.
 
-Verified against Herdr 0.8.0 (protocol 19).
+Verified against Herdr 0.8.2 (protocol 20). Re-check with `herdr --version`; 0.8.2 added `pane.graphics.*`, `client.window_title.*` and `agent.view.*` over 0.8.0.
 
 ## Manifest
 
@@ -120,7 +120,7 @@ Newline-delimited JSON over `$HERDR_SOCKET_PATH`, one request object per line:
 {"id": "req_1", "method": "pane.report_agent", "params": {}}
 ```
 
-90 methods; `herdr api schema --json` is the authority (~250KB, so query it rather than
+117 methods; `herdr api schema --json` is the authority (~250KB, so query it rather than
 reading it whole). `HERDR_SOCKET_PATH` selects **which server** the CLI talks to, which
 is how to target a non-default session.
 
@@ -158,6 +158,121 @@ Agents that report through lifecycle hooks (Pi, OMP, OpenCode, Kilo, Kimi, Mastr
 work this way by design. Claude Code, Codex, Cursor and most others are
 screen-manifest agents whose integrations supply only session identity.
 
+## Showing custom text in the UI
+
+Five surfaces, from most to least useful for "a plugin-owned status indicator". None of
+them are writable from the manifest — a plugin cannot edit `config.toml`, so anything
+needing a config stanza is a README instruction to the user.
+
+| Surface | Scope | Needs user config? |
+|---|---|---|
+| `$name` metadata tokens in sidebar rows | per pane / per Space | yes — the row layout |
+| `title`, `display_agent`, `state_labels` | per pane | no |
+| `ui.tab_bar_right` `command` entry | global (one per server) | yes |
+| `notification.show` | transient toast | yes — delivery defaults to `off` |
+| `[[panes]]`, `client.window_title.set`, `pane.graphics.*` | pane / window | no |
+
+### Metadata tokens
+
+`pane.report_metadata` / `workspace.report_metadata` push arbitrary named strings that
+render as `$name` in sidebar rows. Display-only: unlike `pane.report_agent` this does
+**not** take lifecycle authority, so Herdr's own detection stays in charge.
+
+```sh
+"$HERDR_BIN_PATH" pane report-metadata w1:p1 --source "plugin:my-plugin" \
+  --token build="OK green" --token model=opus --ttl-ms 60000
+"$HERDR_BIN_PATH" workspace report-metadata w1 --source "plugin:my-plugin" \
+  --token jj_status="2 changes"
+```
+
+The user must then place the token, because tokens are values and styling is config:
+
+```toml
+[ui.sidebar.agents]
+rows = [["state_icon", "workspace", "tab", { token = "$build", fg = "#a6e3a1" }], ["agent"]]
+
+[ui.sidebar.spaces]
+rows = [["state_icon", "workspace"], ["branch", "$jj_status"]]
+```
+
+Limits: names `^[A-Za-z0-9_-]{1,32}$`, values normalized (whitespace trimmed, control
+characters stripped) and capped at **80 characters**, ≤16 keys per report, ≤32 retained
+per resource, ≤32 distinct `source` slots per resource for its lifetime. A string sets a
+key, JSON `null` clears it, omitted keys are untouched. `ttl_ms` is 1–86400000 and
+applies per key updated by that call; `seq` makes out-of-order reports safe. Tokens are
+**not restored after a server restart**, and `workspace.metadata_updated` reaches API
+subscribers but **does not invoke plugin event hooks**.
+
+Row rendering is worth knowing: missing values and their separators disappear, and a row
+with no values at all disappears. So for **state-dependent colour** — which a reporter
+otherwise cannot control, since `fg` is static per occurrence — report a different token
+name per state and let the user style each:
+
+```toml
+[{ token = "$build_ok", fg = "#a6e3a1" }, { token = "$build_fail", fg = "#f38ba8" }]
+```
+
+Set one, `--clear-token` the other; exactly one ever renders.
+
+`--title`, `--display-agent` and `--state-label <status>=<text>` need no row config —
+they override built-in rendering directly. `state_labels` keys must be `idle`,
+`working`, `blocked`, `done`, or `unknown`, and only relabel: semantic state still drives
+the dot colour, waits, notifications and rollups. `--agent` and `--applies-to-source`
+guard presentation fields against the wrong occupant; they do not guard token patches.
+
+### You cannot reuse `state_icon`
+
+`state_icon` renders the **semantic agent state of a real agent record**. There is no way
+to ask Herdr to draw one for a non-agent thing. The only route is reporting a synthetic
+agent with `pane.report_agent`, which makes the plugin a full lifecycle authority and
+disables screen detection for that pane — a bad trade for a glyph, and actively
+self-defeating for any plugin that also *reads* `agent_status`. Pick your own glyph
+instead; emoji carry their own colour, which matters where styling is unavailable.
+
+`ui.status_indicators = "symbols"` swaps the dots for distinct static glyphs, but that
+glyph set is not documented — do not try to match it from memory.
+
+### The tab bar status area — the only global surface
+
+Pane and workspace tokens are per-resource. For one fact per Herdr server, use a
+`command` entry, which Herdr re-runs on the server on an interval and renders:
+
+```toml
+[ui]
+tab_bar_right = [
+  { type = "zoom" },
+  { type = "datetime", format = "%H:%M" },
+  { type = "command", command = "~/bin/my-status", interval_seconds = 5, timeout_seconds = 2 },
+]
+tab_bar_right_separator = " . "
+```
+
+Herdr renders the **last line of successful output** and clears the entry on failure,
+empty output, or timeout — so "print nothing" is a first-class way to say "nothing to
+show", and a broken script degrades to silence rather than garbage. `interval_seconds`
+is 1–31536000, `timeout_seconds` 1–3600, runs never overlap and never block rendering.
+Commands get the same context as custom command keybindings — **including
+`HERDR_SOCKET_PATH`**, which is how a script finds the right session's state — but not
+the `HERDR_PLUGIN_*` variables, so resolve plugin state dirs by their default paths.
+Executed with `/bin/sh -lc` on Linux/macOS and `cmd.exe /d /c` on Windows. ANSI colour is
+undocumented; assume plain text. Every run is a process spawn, so keep the script to file
+reads — a Python one costs ~30 ms, which is ~0.6% of a core at a 5 s interval.
+
+### Toasts, panes, window title, graphics
+
+- `notification.show` — `{title, body?, position?, sound?}`, sound is
+  `none|done|request`. CLI: `herdr notification show <TITLE> --body ... --sound none`.
+  **`ui.toast.delivery` defaults to `off`**, so this is invisible until the user opts in.
+- `[[panes]]` in the manifest — a plugin-owned pane, `placement` one of
+  `overlay|popup|split|tab|zoomed`, driven by `herdr plugin pane open|focus|close`. Your
+  command owns a real terminal, so draw anything.
+- `client.window_title.set` / `.clear` — overrides `ui.window_title` for the foreground
+  client until cleared.
+- `pane.graphics.set` / `.stream` / `.clear` — real PNG/RGB/RGBA images composited into a
+  pane, up to 16 layers with `layer_id` and `z_index`. Overkill for a status glyph.
+- `pane.rename` / `tab.rename` / `workspace.rename` — real persistent labels, not
+  display-only. Blunt, but visible everywhere with no config.
+
 ## Gotchas
 
 - **`command` is argv, not a shell line.** Use `["sh", "-c", "..."]` if a pipeline is
@@ -166,6 +281,10 @@ screen-manifest agents whose integrations supply only session identity.
 - **`platforms = []` is an error**, not a wildcard — omit the key instead.
 - **Scripts must be executable** and must handle their own errors with informative
   messages; a silent non-zero exit shows up only in the plugin log.
+- **A `$name` token is invisible until the user adds it to a row.** Reporting one
+  is half the job; the other half is a README stanza for `ui.sidebar.*.rows`.
+- **A plugin cannot write `config.toml`.** Every config-dependent UI surface is an
+  instruction to the user, never something `herdr plugin install` sets up.
 - **Adding a new agent *kind* is not a plugin's job** — it requires a Herdr binary
   update. Detection manifests only patch rules for kinds Herdr already identifies.
 
