@@ -289,10 +289,9 @@ Plugin registration lives in `~/.config/herdr/plugins.json`, which is **not**
 session-scoped: a single linked plugin runs in every session's server. Two Herdr sessions
 would each compute `folders` from their own Space list and overwrite the other's.
 
-The guard: by default the plugin only syncs for the **default** session (a
-`$HERDR_SOCKET_PATH` outside `.../sessions/<name>/`); other sessions log
-`skipped-session` and exit 0.
-socket instead. `--doctor` reports the socket it saw.
+The guard: the plugin only syncs for the **default** session (a `$HERDR_SOCKET_PATH`
+outside `.../sessions/<name>/`); other sessions log `skipped-session` and exit 0.
+`--doctor` reports the socket it saw.
 
 ## Herdr JSON shapes
 

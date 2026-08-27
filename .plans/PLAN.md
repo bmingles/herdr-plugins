@@ -13,6 +13,14 @@ beside it; completed plans move to `.plans/archived/`.
   commands, the classification that avoids relying on anyone's memory, and the decision
   rule. Blocked only on the user running the plugin for a day at `"logLevel": "debug"`.
 
+- [vscode-sync-session-mapping](vscode-sync-session-mapping.md) — let each Herdr session
+  drive its own VS Code workspace file, via a `sessions` name→config map, replacing the
+  blunt "only the default session syncs" guard. **Speculative** — only worth building if
+  the user actually runs multiple sessions at once; the plan says so at the top and says
+  to close it otherwise. Written to be picked up cold: the socket-path→session-name
+  derivation is already pinned by probe 11 in `docs/herdr-vscode-sync-facts.md`, so no
+  discovery step is needed.
+
 - [herdr-daemon-discovery](herdr-daemon-discovery.md) — host probes answering the
   unknowns both new plugins depend on: does a daemon spawned from `[[startup]]` survive,
   what does a long-lived `events.subscribe` connection actually look like, and what
@@ -63,3 +71,4 @@ beside it; completed plans move to `.plans/archived/`.
 | 4 | [agent-caffeinate](agent-caffeinate.md) | Hold a sleep-inhibiting assertion while agents are working, release it after a minute idle | complete |
 | 5 | [workspace-time-tracker](workspace-time-tracking.md) | Track time spent per Space, stopping on switch and on inactivity | complete |
 | 6 | [caffeinate-grace-tuning](caffeinate-grace-tuning.md) | Set idleGraceSec from measured false-idle gaps |  |
+| 7 | [vscode-sync-session-mapping](vscode-sync-session-mapping.md) | Map each Herdr session name to its own VS Code workspace file |  |
