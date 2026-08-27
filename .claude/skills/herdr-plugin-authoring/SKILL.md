@@ -254,9 +254,14 @@ is 1–31536000, `timeout_seconds` 1–3600, runs never overlap and never block 
 Commands get the same context as custom command keybindings — **including
 `HERDR_SOCKET_PATH`**, which is how a script finds the right session's state — but not
 the `HERDR_PLUGIN_*` variables, so resolve plugin state dirs by their default paths.
-Executed with `/bin/sh -lc` on Linux/macOS and `cmd.exe /d /c` on Windows. ANSI colour is
-undocumented; assume plain text. Every run is a process spawn, so keep the script to file
-reads — a Python one costs ~30 ms, which is ~0.6% of a core at a 5 s interval.
+Executed with `/bin/sh -lc` on Linux/macOS and `cmd.exe /d /c` on Windows. ANSI escapes
+make Herdr **hide the entry** (verified: same script, escapes added, entry vanished) — so
+plain text only, and colour must come from the glyph, e.g. an emoji. Every run is a
+process spawn, so keep the script to file reads — a Python one costs ~30 ms, which is
+~0.6% of a core at a 5 s interval. `tab_bar_right` defaults to `[]` and caps at **16**
+entries; types are `zoom`, `hostname`, `datetime` (`format`, default `%H:%M`), `text`
+(`text`), and `command`. Each `{ ... }` must stay on one line — TOML inline tables cannot
+span newlines.
 
 ### Toasts, panes, window title, graphics
 

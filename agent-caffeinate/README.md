@@ -76,10 +76,27 @@ actually held. Add a `command` entry to the tab bar's status area in your Herdr
 ```toml
 [ui]
 tab_bar_right = [
-  { type = "command", command = "<plugin-path>/bin/agent-caffeinate indicator",
-    interval_seconds = 5, timeout_seconds = 2 },
+  { type = "command", command = "<plugin-path>/bin/agent-caffeinate indicator", interval_seconds = 5, timeout_seconds = 2 },
 ]
 tab_bar_right_separator = " · "
+```
+
+Keep each `{ ... }` entry on **one line** — TOML inline tables cannot span newlines, and
+splitting one yields ``invalid inline table / expected `}` ``. The command runs through
+`/bin/sh -lc`, so `~` and `$HOME` expand normally.
+
+`tab_bar_right` defaults to `[]`, so this entry adds a status area rather than replacing
+one. To show other things alongside it, list them in render order — `zoom`, `hostname`,
+`datetime` (`format` defaults to `%H:%M`), `text` (`text = "..."`), and `command`, up to
+16 entries:
+
+```toml
+tab_bar_right = [
+  { type = "zoom" },
+  { type = "command", command = "<plugin-path>/bin/agent-caffeinate indicator", interval_seconds = 5, timeout_seconds = 2 },
+  { type = "hostname" },
+  { type = "datetime", format = "%H:%M" },
+]
 ```
 
 | Daemon | Renders |
@@ -113,8 +130,12 @@ Three things worth knowing before you wire it up:
   the right session's state directory. It does *not* get `HERDR_PLUGIN_STATE_DIR`, so it
   falls back to the default `~/.local/state/herdr/plugins/agent-caffeinate`. Correct
   unless you have relocated Herdr's state.
-- **Assume plain text.** ANSI colour in a `tab_bar_right` command's output is not
-  documented; the emoji carries its own colour, which is why the default icon is one.
+- **Plain text only, and this is enforced.** ANSI escapes in a `tab_bar_right` command's
+  output make Herdr **hide the entry entirely** — tested by emitting SGR colour from an
+  otherwise-working entry, which then vanished while the same script without escapes
+  rendered fine. So colour has to come from the glyph: emoji carry their own. Use
+  `--icon` for a louder one, e.g. `--icon 🔴 --label AWAKE`, if `☕ caffeinate` is easy
+  to miss.
 
 ### Why the tab bar and not the sidebar
 
