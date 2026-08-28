@@ -378,14 +378,28 @@ is nearly zero — we hold `-i -s`, so the display still sleeps and locks, and a
 is the start of macOS's own multi-minute idle countdown — while the cost of being too short
 is an interrupted agent. So err generous.
 
-**Why the default is 60.** A five-hour run on 2026-08-27 across two Herdr sessions produced
-28 grace releases, 27 of them followed by an agent working again. Two of those gaps were
-**62 s**: the assertion was released on the 60 s deadline and re-taken on the very next
-poll. Nothing in that data suggests 60 is too generous, and two observations suggest it is
-close to the edge, so 60 stands. That run could not measure gaps *shorter* than the grace,
-because sub-grace gaps produced no log line — which is exactly why the status lines are now
-at `info`. Whether a lower value such as 30 is safe is still unmeasured; do not lower it
-without gaps to point at.
+**Why the default is 60 — measured, 2026-08-28.** Roughly 3 h of active use (1 h 33 m of
+assertion-held time across 17 spans, 4 panes, 3 sessions, all Claude Code) produced 55
+per-pane gaps. Excluding `blocked` prompt-waits and gaps at the 2 s poll floor, **16** were
+idle-only, and the distribution is cleanly bimodal:
+
+| | count | range |
+| --- | --- | --- |
+| Detection blips — false idles, held straight through | 6 | 6.0 – **22.1 s** |
+| Human absence — released the assertion | 10 | 214.9 s – 3.3 h |
+| Anything in between | **0** | — |
+
+No gap of any kind fell between 22.1 s and 214.9 s. All six false idles were sandwiched
+between real working spans; the largest was `done:10s idle:12s` with 26 s of work before
+and 52 s after — the agent was plainly mid-task while detection lost it.
+
+So the observed false-idle ceiling is **22.1 s**, and 60 sits 2.7x above it. Note what this
+does *not* license: nothing observed would have broken under a 30 s grace either, since 30
+still covers 22.1 s. But 30 is only 1.36x a ceiling estimated from six samples in three
+hours, and the cost of being generous is near zero — `-i -s` lets the display sleep and
+lock on schedule, so all that is delayed is the start of macOS's own multi-minute idle
+countdown. **60 stands.** If you want it shorter, 45 (2.0x) is what this data supports; 30
+is not, on this sample size.
 
 A daemon restart clears the transition journal's in-memory state, so gaps in flight across
 it are lost — which is why this wants a day's data, not an hour's.
@@ -423,7 +437,7 @@ herdr plugin link ./agent-caffeinate       # run a working tree instead of an in
 cd agent-caffeinate && python3 -m unittest discover -s test
 ```
 
-91 tests, no network, no Herdr server, no macOS required. The daemon runs as a real
+95 tests, no network, no Herdr server, no macOS required. The daemon runs as a real
 subprocess against a fake Herdr socket server (`test/fake_server.py`) and a fake inhibitor
 (`test/fake-caffeinate`) that logs its own start/stop — so the spawn, kill, grace-period and
 server-death paths are all exercised for real. Timing-sensitive logic lives in

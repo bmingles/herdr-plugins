@@ -1,10 +1,14 @@
 # caffeinate-grace-tuning
 
 Decide `agent-caffeinate`'s default `idleGraceSec` from measured data instead of
-judgement. Currently **60**; the open question is whether **30** is safe.
+judgement. Was **60**; the open question was whether **30** is safe.
 
-This plan exists to be picked up by an agent with **no prior context**, after the user
-has run the plugin for a day. Everything needed is here or linked.
+**CLOSED 2026-08-28 — the answer is no, and 60 stays.** The observed false-idle ceiling is
+**22.1 s**; 30 clears it on observed events but gives only 1.36x margin from six samples in
+three hours, below this plan's 1.5x rule, and being generous costs essentially nothing. See
+`## Run 2` for the numbers and `## Run 1` for the instrument bug that made the first attempt
+worthless. The method and tooling below are kept because they are the reusable part —
+`tools/gap-report.py` answers this question again from any future log.
 
 ## The question, precisely
 
@@ -304,44 +308,78 @@ marginal. Whether those two were false idles or `blocked` prompt-waits is exactl
 - [x] Move the transition lines to `info` so run 2 can measure the decision band
 - [x] Record run 1's numbers and the `60` rationale in `agent-caffeinate/README.md`
 
-### Run 2 — the instrument is armed; needs a normal working day
-Daemons were restarted onto the `info` build at 2026-08-27 18:15, so the clock starts
-there. Everything before that timestamp has no transition lines and cannot be analysed.
+### Run 2 — 2026-08-28, complete. **60 stands.**
+Daemons were restarted onto the `info` build at 2026-08-27 18:15:34, and no restart has
+happened since, so the whole window is one continuous measurement at `grace=60`.
 
-- [ ] Confirm transition lines exist (`tools/gap-report.py` says so, or reports why not);
-      stop and report if not
-- [ ] Note the `grace=` value(s) and how many restarts split the log
-- [ ] Run `tools/gap-report.py`; sanity-check the gap count and observation window are
-      enough to conclude anything at all
-- [ ] Read the `[30, 60)` band, and state whether it is empty *because nothing is there*
-      or *because the data is thin* — these are different findings
-- [ ] Identify the largest sub-grace idle-only gap; that is the floor
-- [ ] For any ambiguous gap in the band, ask the user what was happening at that timestamp
-- [ ] Apply the decision rule and change `Config.idle_grace_sec` in
-      `agent-caffeinate/src/config.py` **only** if the data supports it
-- [ ] If the default changed: `config.example.json`, `README.md`'s "Why the default is 60",
-      and `test_config.py::test_defaults_without_a_file`
-- [ ] Either way: fold run 2's observed numbers into `README.md`, replacing run 1's
-- [ ] Run the suite: `cd agent-caffeinate/test && python3 -m unittest discover -s .`
-- [ ] Move this plan to `.plans/archived/` and update `.plans/PLAN.md`
+- [x] Confirm transition lines exist — 139 across three logs
+- [x] Note the `grace=` value(s) and restarts — 60.0 s throughout, zero restarts in-window
+- [x] Run `tools/gap-report.py` — 55 per-pane gaps
+- [x] Sanity-check the window: **~3 h active** (56 min on 08-27 evening + 2 h 01 m on 08-28
+      morning; the 17 h clock span is mostly overnight), **1 h 33 m assertion-held** across
+      17 spans, 9% duty cycle, 4 panes, 3 sessions, **all Claude Code**
+- [x] Read the `[30, 60)` band — **empty, because nothing is there.** Not thin data: no gap
+      of *any* kind (false idle, prompt-wait or absence) falls between 22.1 s and 214.9 s
+- [x] Identify the largest sub-grace idle-only gap — **22.1 s**, `w9:p5`, ended
+      2026-08-28 10:53:19, composition `done:10s idle:12s`, with 26 s of work immediately
+      before and 52 s immediately after. That is the floor.
+- [x] Ambiguous gaps in the band — none to ask about; the band is empty
+- [x] Apply the decision rule — **no change. `idle_grace_sec` stays 60.**
+- [x] Default unchanged, so `config.example.json` / `test_config.py` untouched
+- [x] Run 2's numbers folded into `README.md`, replacing run 1's
+- [x] Suite: 95 tests pass
+- [x] Plan archived and `PLAN.md` updated
+
+**The result, in full.** Excluding `blocked` prompt-waits and the 2 s poll floor, 16 gaps
+were idle-only and the distribution is bimodal with a three-minute canyon:
+
+| | count | range |
+| --- | --- | --- |
+| Detection blips — false idles, held straight through | 6 | 6.0 – **22.1 s** |
+| Human absence — released the assertion | 10 | 214.9 s – 3.3 h |
+| In between | **0** | — |
+
+All six false idles sat between real working spans, so each is confirmed by composition and
+context rather than by anyone's memory — which is what the `blocked` split and the
+transition lines were added to make possible.
+
+**Why not 30, given an empty band.** Nothing observed would have broken under 30: it still
+covers 22.1 s. But 30 is 1.36x a ceiling estimated from **six** samples over **three
+hours**, below this plan's own 1.5x margin (22.1 × 1.5 = 33.2). The margin exists for the
+tail that was not sampled, and three hours does not pin a tail. Since being generous costs
+essentially nothing, 60 is kept at 2.7x. **45** (2.0x) is the value the data would support
+if a shorter grace is ever wanted; 30 is not, at this sample size.
+
+**Run 1's two 62 s spans, resolved.** They were per-*session* release/re-hold pairs of
+unknown composition. Run 2's per-pane data shows nothing at all in `[60, 120)`, while
+`blocked` prompt-waits do occur and run long (one was 727 s). They were almost certainly
+prompt-waits, not false idles. No longer a reason for concern.
+
+**If this is ever reopened**, the one thing that would change the answer is a full working
+day showing the 22 s ceiling holds — that would justify 45, or 30 as a deliberate override.
+Nothing else in the method needs revisiting.
 
 ## Validation
 
-- [ ] The report to the user states **how many** gaps were observed, over **how long** a
-      period — a conclusion from three gaps in one hour is not the same as thirty over a
-      day, and must not be presented as though it were
-- [ ] Every gap cited as a false idle is confirmed by the user, or is idle-only
-      (`idle`/`done` throughout, **no** `blocked` leg) **and** sub-grace. An
-      `entries.jsonl` entry spanning the gap is **not** sufficient — see § 4
-- [ ] No conclusion rests on a gap at or below the ~4 s poll floor
-- [ ] Any gap that spanned a daemon restart is reported as unmeasurable, not bridged
-- [ ] An empty `[30, 60)` band is reported as "nothing there" or "data too thin" —
-      explicitly, one or the other, never left ambiguous
-- [ ] If the default changed: `python3 -c "import sys; sys.path.insert(0,'src'); import config; print(config.Config().idle_grace_sec)"` prints the new value
-- [ ] `cd agent-caffeinate/test && python3 -m unittest discover -s .` — all pass
-- [ ] `./bin/agent-caffeinate doctor` shows the new `idleGraceSec` with no config file
-- [ ] The README no longer justifies a number it does not use
-- [ ] `python3 tools/gap-report.py` runs clean against the real logs, and against a
+- [x] The report to the user states **how many** gaps were observed, over **how long** a
+      period — reported as 55 gaps over ~3 h *active* (1 h 33 m held), explicitly correcting
+      the 17 h clock span, which is mostly overnight
+- [x] Every gap cited as a false idle is confirmed by the user, or is idle-only
+      (`idle`/`done` throughout, **no** `blocked` leg) **and** sub-grace — all six qualify,
+      and each was additionally shown sandwiched between real working spans. No
+      `entries.jsonl` evidence was used
+- [x] No conclusion rests on a gap at or below the ~4 s poll floor — 39 of the 55 were
+      excluded on that basis or as prompt-waits
+- [x] Any gap that spanned a daemon restart is reported as unmeasurable — zero restarts
+      in-window, so none
+- [x] An empty `[30, 60)` band is reported explicitly as **"nothing there"**, evidenced by
+      the 22.1 s → 214.9 s canyon being empty for *all* gap types
+- [x] Default unchanged, so no `Config.idle_grace_sec` assertion to update
+- [x] `cd agent-caffeinate/test && python3 -m unittest discover -s .` — 85 pass
+- [x] `./bin/agent-caffeinate doctor` shows `idleGraceSec: 60` with no config file
+- [x] The README no longer justifies a number it does not use — run 1's per-session spans
+      replaced by run 2's per-pane distribution
+- [x] `python3 tools/gap-report.py` runs clean against the real logs, and against a
       non-matching glob (prints "No logs matched", exit 1)
 
 ## Relevant Files

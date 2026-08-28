@@ -7,18 +7,6 @@ beside it; completed plans move to `.plans/archived/`.
 
 ### Pending
 
-- [caffeinate-grace-tuning](caffeinate-grace-tuning.md) — decide `agent-caffeinate`'s
-  default `idleGraceSec` (currently 60; is 30 safe?) from measured false-idle gaps rather
-  than judgement. **Written to be picked up cold** — it carries the log format, the
-  analysis commands, the classification that avoids relying on anyone's memory, and the
-  decision rule. **Run 1 (2026-08-27) was inconclusive**: the transition lines were at
-  `debug` and `logLevel` was the default, so 5 h of real use logged 28 grace releases and
-  zero gap durations. Two 62 s gaps *were* visible from the release/re-hold pairs, so 60
-  is already marginal and **must not** be lowered on current evidence. Fixed for run 2 —
-  transition lines moved to `info` (85 tests pass), and step 4's `entries.jsonl`
-  corroboration was found unsound and rewritten. See `## Run 1` in the plan. Now blocked
-  on the **installed** plugin copy carrying the `info` change, then a normal working day.
-
 - [herdr-daemon-discovery](herdr-daemon-discovery.md) — host probes answering the
   unknowns both new plugins depend on: does a daemon spawned from `[[startup]]` survive,
   what does a long-lived `events.subscribe` connection actually look like, and what
@@ -27,6 +15,23 @@ beside it; completed plans move to `.plans/archived/`.
   in both plans below.
 
 ### Completed
+
+- [caffeinate-grace-tuning](archived/caffeinate-grace-tuning.md) — `idleGraceSec` **stays
+  60**, now on measured evidence rather than judgement. Run 1 (08-27) was worthless: the
+  transition lines were at `debug` while `logLevel` defaulted to `info`, so 5 h of real use
+  logged 28 grace releases and zero gap durations, and the planned `[30,60)` grep would have
+  printed a false green light. Moving those lines to `info` and adding
+  `agent-caffeinate/tools/gap-report.py` made run 2 (08-28) conclusive: over ~3 h active
+  (1 h 33 m held, 4 panes, 3 sessions, all Claude Code), the **false-idle ceiling is 22.1 s**
+  (6 observations, each sandwiched between real working spans) and human absence starts at
+  214.9 s — **nothing in between**. So 30 breaks nothing observed but gives only 1.36x
+  margin from six samples, under the plan's 1.5x rule; 60 is kept at 2.7x, and 45 is the
+  value the data would support if a shorter grace is ever wanted. Two side findings, both
+  recorded: a socket-only reader sees **`done`, essentially never `idle`**
+  (`docs/herdr-daemon-facts.md` § C4), so any `grep 'idle -> working'` finds nothing; and
+  `workspace-time-tracker`'s `entries.jsonl` is **not** independent corroboration — it shares
+  the `working` signal and never hashes agent panes, so a spanning entry proves a human was
+  at the keyboard, not that an agent was working. **95 tests pass.**
 
 - [vscode-workspace-adopt](archived/vscode-workspace-adopt.md) — the **inbound**
   direction for `vscode-workspace-sync`: `bin/adopt` reads a `.code-workspace` file's
@@ -91,6 +96,6 @@ beside it; completed plans move to `.plans/archived/`.
 | 3 | [herdr-daemon-discovery](herdr-daemon-discovery.md) | Prove the `[[startup]]` daemon model, `events.subscribe` framing, and a plain-shell activity signal on the host | in progress |
 | 4 | [agent-caffeinate](agent-caffeinate.md) | Hold a sleep-inhibiting assertion while agents are working, release it after a minute idle | complete |
 | 5 | [workspace-time-tracker](workspace-time-tracking.md) | Track time spent per Space, stopping on switch and on inactivity | complete |
-| 6 | [caffeinate-grace-tuning](caffeinate-grace-tuning.md) | Set idleGraceSec from measured false-idle gaps | in progress — run 1 inconclusive, instrument fixed, awaiting run 2 |
+| 6 | [caffeinate-grace-tuning](archived/caffeinate-grace-tuning.md) | Set idleGraceSec from measured false-idle gaps | complete — 60 stands; false-idle ceiling measured at 22.1 s |
 | 7 | [vscode-sync-session-mapping](archived/vscode-sync-session-mapping.md) | Map each Herdr session name to its own VS Code workspace file | complete |
 | 8 | [vscode-workspace-adopt](archived/vscode-workspace-adopt.md) | Create Herdr Spaces from a `.code-workspace` file's folders, for sessions sync does not manage | complete |
