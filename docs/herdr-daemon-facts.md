@@ -182,6 +182,27 @@ a snapshot is confirmed viable.
 repeats carry unchanged values), C2 (what arrives when an agent exits), C3 (killing a
 pane mid-task).
 
+### C4 — a socket-only reader sees `done`, essentially never `idle`
+
+Observed 2026-08-27 from `agent-caffeinate`'s transition log, and explained by
+`docs/herdr-research-notes.md`: the enum is `idle | working | blocked | done | unknown`,
+and **`done` is `idle` whose tab has not been seen in the focused UI — CLI reads do not
+mark a tab seen.**
+
+A daemon that only polls the socket therefore never marks anything seen, so a finished
+agent stays `done` until the human personally clicks into that tab. In practice `done` is
+the normal post-work status and `idle` the exception: every gap in the first minutes of
+observation was `done:Ns`, and `idle` appeared only after the tab was visited.
+
+Consequences for any plugin that reasons about agents going quiet:
+
+- Treat `done` and `idle` as the same thing. Matching only `idle` finds nothing.
+- `done` is **not** a terminal or success signal despite the name. It carries no more
+  information than `idle` does about whether the agent actually stopped — both can be the
+  `default_known_agent_idle_fallback` rule firing on an unrecognised screen.
+- `blocked` is the one status that positively means "waiting on a human", which makes it
+  the only reliable way to separate a prompt-wait from a possible detection failure.
+
 ## D. Activity signals
 
 ### D2 — `panes[].revision` is NOT an activity signal

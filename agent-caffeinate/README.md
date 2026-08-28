@@ -249,32 +249,65 @@ The daemon records every status change with the duration of the status it left, 
 2026-08-27T09:12:11-05:00 info  status w4:p2 idle -> working (was idle for 8.4s)
 ```
 
-A `idle -> working (was idle for Ns)` line **inside** a task you know was running the
-whole time is a false-idle gap of N seconds.
+A return to `working` after a stretch of not-working is a candidate false-idle gap.
 
 These were originally `debug`, which turned out to be a mistake: the measurement only
 existed when someone remembered to enable it, so the first five hours of real use logged
 28 grace releases and not one gap. They are one line per pane status change — a few
 hundred a day against a 1 MB cap — so they are worth having always.
 
-Just work normally for a few real tasks, then rank the gaps, largest first:
+Work normally for a day, then run the report:
 
 ```sh
-grep -h 'idle -> working' ~/.local/state/herdr/plugins/agent-caffeinate/*/daemon.log* \
-  | sed -E 's/^([0-9T:+-]+).*status ([^ ]+).*was idle for ([0-9.]+)s\)/\3\t\1\t\2/' \
-  | sort -rn | head
+python3 tools/gap-report.py
 ```
 
 ```
-123.9   2026-08-27T09:14:20-0500   w4:p9      <- between tasks; ignore
-17.3    2026-08-27T09:13:47-0500   w4:p2      <- inside a task; this is the one that counts
-8.4     2026-08-27T09:12:54-0500   w4:p2
+   secs  kind        assn pane      session        composition            flags
+  937.0s  idle-only   REL  w9:p4     abc123def456   done:869s idle:68s
+  254.0s  prompt-wait REL  w9:p1     abc123def456   done:44s blocked:210s
+   44.0s  idle-only   held w9:p1     abc123def456   done:44s               SUB-GRACE
+    2.0s  idle-only   held w9:p1     abc123def456   done:2s                SUB-GRACE,poll-floor
+
+idle-only gaps above the poll floor: 2 of 4
+  [30,60): 1
+held straight through the grace -- FALSE IDLES THE CURRENT SETTING SURVIVES: 1
+  largest: 44.0s (w9:p1). This is the floor: do not set idleGraceSec below it.
+
+THE DECISION BAND -- candidates in [30,60), where 30 differs from 60: 1
+  44.0s  w9:p1  abc123def456  ended 2026-08-28 09:04:44
 ```
 
-**Read the timestamps, not just the numbers.** A large gap between two tasks is you not
-working, which is exactly what the plugin should treat as idle. Only gaps *within* a task
-you know was running continuously are false idles, and only those set the floor for
-`idleGraceSec`.
+Read that as: the 937 s gap is lunch, the 254 s one is a permission prompt you took three
+minutes to answer, the 2 s one is noise — and the **44 s** one is the whole finding. It is
+idle-only, it was held straight through, and it sits in `[30, 60)`. Under a 30 s default
+the machine would have been free to sleep there. That single row is why 30 would be unsafe
+on this data, and why the floor is 44 rather than anything the other three rows suggest.
+
+Three columns carry the argument:
+
+- **`composition`** — which statuses the gap passed through. A `blocked` leg means *you*
+  were the bottleneck, not detection; that is a prompt-wait and tells you nothing about
+  `idleGraceSec`. Only `idle`/`done`-only gaps are candidates.
+- **`assn`** — `held` means the assertion survived the gap; `REL` means it was released.
+- **`SUB-GRACE`** — shorter than the grace, so detection lost the agent while the machine
+  correctly stayed awake anyway. **These set the floor.** The largest one is the number
+  that matters; go below it and you re-open a gap you currently cover.
+
+**Read the durations, not just the flags.** A 900 s `idle-only` gap is you at lunch, which
+is exactly what the plugin should treat as idle. Only gaps *within* a task you know was
+running continuously are false idles.
+
+**Expect `done`, not `idle`.** Herdr's `done` means "idle whose tab has not been seen in
+the focused UI", and CLI/socket reads do not mark a tab seen — so this daemon, which only
+polls the socket, sees `done` for any finished agent in a tab you have not personally
+clicked into. `done` is the normal case here and `idle` the exception, and it is not a
+success signal: it says no more than `idle` about whether the agent really stopped. Any
+`grep 'idle -> working'` finds nothing. Details in
+[`docs/herdr-daemon-facts.md`](../docs/herdr-daemon-facts.md) § C4.
+
+**And mind the 2 s poll floor.** `pollIntervalSec` is 2, so brief gaps all read as exactly
+`2.0s`. The report flags those `poll-floor`; ignore them.
 
 Set `idleGraceSec` comfortably above the largest value you see. The cost of being too
 long is nearly zero — we hold `-i -s`, so the display still sleeps and locks, and all you
@@ -289,6 +322,19 @@ suggest it is close to the edge, so 60 stands. That run could not measure gaps *
 than the grace, because sub-grace gaps produced no log line — which is exactly why the
 status lines are now at `info`. Whether a lower value such as 30 is safe is still
 unmeasured; do not lower it without gaps to point at.
+
+One daemon runs per Herdr session and each holds its settings and code from startup, so
+after changing either, restart them all — the registered `restart` action only reaches the
+session that invokes it:
+
+```sh
+for s in ~/.config/herdr/herdr.sock ~/.config/herdr/sessions/*/herdr.sock; do
+  HERDR_SOCKET_PATH="$s" ./bin/agent-caffeinate daemon --restart
+done
+```
+
+A restart also clears the transition journal's in-memory state, so gaps in flight across
+it are lost — which is why this wants a day's data, not an hour's.
 
 **A trap worth naming.** `workspace-time-tracker`'s `entries.jsonl` looks like
 independent corroboration — a caffeinate gap falling inside a tracked entry looks like
