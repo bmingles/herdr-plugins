@@ -1,0 +1,11 @@
+#!/bin/sh
+# bin/adopt — locate a Python 3 without trusting PATH, then exec the real entrypoint.
+# The server's PATH is whatever launched it, so neither `python3` nor a
+# `#!/usr/bin/env python3` shebang is safe here. Same shape as bin/sync.
+for py in /usr/bin/python3 /opt/homebrew/bin/python3 /usr/local/bin/python3; do
+    [ -x "$py" ] && exec "$py" "$(dirname "$0")/../src/adopt.py" "$@"
+done
+py=$(command -v python3 2>/dev/null) && exec "$py" "$(dirname "$0")/../src/adopt.py" "$@"
+echo "herdr-vscode-sync: no python3 found. Install Xcode Command Line Tools" >&2
+echo "  (xcode-select --install) or Homebrew Python (brew install python)." >&2
+exit 127

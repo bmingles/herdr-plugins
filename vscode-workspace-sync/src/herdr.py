@@ -227,3 +227,92 @@ class FolderEntry(object):
         if not isinstance(other, FolderEntry):
             return NotImplemented
         return (self.path, self.name) == (other.path, other.name)
+
+
+# ---------------------------------------------------------------------------
+# Mutating calls, used only by the inbound direction (`src/adopt.py`).
+#
+# Measured on herdr 0.8.2 (devcontainer probe, 2026-08-27) -- three silent failure
+# modes that the caller, not Herdr, has to defend against:
+#
+#   1. `workspace create` does NOT dedupe by path. Creating with a --cwd that already
+#      backs a Space yields a SECOND Space and does not touch the first one's label.
+#   2. A --cwd naming a directory that does not exist SUCCEEDS, silently rooting the
+#      new Space at $HOME. There is no error.
+#   3. A relative --cwd is not resolved against the caller's cwd -- it also lands at
+#      $HOME. Always pass an absolute path.
+#
+# So `adopt.plan_adoption` dedupes against a live snapshot and isdir-checks every
+# folder before any of this runs.
+# ---------------------------------------------------------------------------
+
+
+def _run_herdr(args, env):
+    """Run `herdr <args>` and return the parsed `.result` object.
+
+    Herdr reports failure two ways -- a non-zero exit, and a well-formed body with an
+    `error` member (sometimes alongside exit 0) -- so both are checked.
+    """
+    cmd = [herdr_bin(env)] + list(args)
+    try:
+        proc = subprocess.run(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=dict(env)
+        )
+    except OSError as exc:
+        raise HerdrError("cannot run %s: %s" % (" ".join(cmd), exc))
+
+    out = proc.stdout.decode("utf-8", "replace").strip()
+    doc = None
+    if out:
+        try:
+            doc = json.loads(out)
+        except ValueError:
+            doc = None
+
+    if isinstance(doc, dict) and isinstance(doc.get("error"), dict):
+        error = doc["error"]
+        raise HerdrError(
+            "%s failed: %s (%s)"
+            % (" ".join(cmd), error.get("message", "?"), error.get("code", "?"))
+        )
+    if proc.returncode != 0:
+        detail = proc.stderr.decode("utf-8", "replace").strip() or out or "no output"
+        raise HerdrError("%s exited %d: %s" % (" ".join(cmd), proc.returncode, detail))
+    if not isinstance(doc, dict) or not isinstance(doc.get("result"), dict):
+        raise HerdrError("%s returned no .result object: %s" % (" ".join(cmd), out or "<empty>"))
+    return doc["result"]
+
+
+def create_workspace(cwd, label=None, env=None):
+    """Create a Space rooted at `cwd`. Returns the new `workspace` record.
+
+    `cwd` **must** be absolute and must already have been checked to be a directory --
+    see the note above; Herdr validates neither. `--no-focus` throughout, so adopting a
+    workspace file never yanks the user out of the Space they are in.
+
+    `label` is passed only when the caller has one to impose. Herdr derives a Space's
+    label from the directory basename on its own, so omitting it gives the same result
+    with one less thing to disagree about.
+    """
+    if env is None:
+        env = os.environ
+    args = ["workspace", "create", "--cwd", cwd]
+    if label:
+        args += ["--label", label]
+    args.append("--no-focus")
+    result = _run_herdr(args, env)
+    workspace = result.get("workspace")
+    if not isinstance(workspace, dict):
+        raise HerdrError("workspace create returned no .result.workspace object")
+    return workspace
+
+
+def rename_workspace(workspace_id, label, env=None):
+    """Relabel an existing Space. Returns the updated `workspace` record."""
+    if env is None:
+        env = os.environ
+    result = _run_herdr(["workspace", "rename", workspace_id, label], env)
+    workspace = result.get("workspace")
+    if not isinstance(workspace, dict):
+        raise HerdrError("workspace rename returned no .result.workspace object")
+    return workspace

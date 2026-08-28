@@ -1,0 +1,8 @@
+{
+  // Relative paths resolve against THIS file's directory, not $PWD -- VS Code's rule.
+  "folders": [
+    { "path": "spaces" },
+    { "path": "./spaces" },
+    { "path": ".." }
+  ]
+}

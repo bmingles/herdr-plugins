@@ -1,0 +1,12 @@
+{
+  "folders": [
+    { "path": "/tmp" },
+    { "path": "/tmp" },
+    { "name": "no path here" },
+    "not an object",
+    { "path": "" },
+    { "path": "${workspaceFolder}/sub" },
+    { "path": 42 },
+    { "path": "/usr", "name": "" }
+  ]
+}

@@ -1,0 +1,60 @@
+#!/usr/bin/python3
+"""A stand-in for the `herdr` CLI, pointed at by `HERDR_BIN_PATH` in the adopt tests.
+
+Appends one line of JSON per invocation to `$FAKE_HERDR_LOG` so a test can assert on
+exactly what adopt asked Herdr to do -- the `--cwd` it passed in particular, since a
+relative or nonexistent one is a silent failure on the real thing.
+
+`FAKE_HERDR_FAIL=<substring>` makes any create whose --cwd contains that substring
+return a Herdr-shaped error body, to exercise the partial-failure path.
+"""
+
+import json
+import os
+import sys
+
+argv = sys.argv[1:]
+
+log = os.environ.get("FAKE_HERDR_LOG")
+if log:
+    with open(log, "a") as fh:
+        fh.write(json.dumps(argv) + "\n")
+
+
+def opt(name):
+    if name in argv:
+        i = argv.index(name)
+        if i + 1 < len(argv):
+            return argv[i + 1]
+    return None
+
+
+if argv[:2] == ["workspace", "create"]:
+    cwd = opt("--cwd") or ""
+    fail = os.environ.get("FAKE_HERDR_FAIL")
+    if fail and fail in cwd:
+        print(json.dumps({
+            "id": "cli:workspace:create",
+            "error": {"code": "workspace_create_failed", "message": "ghostty error -2"},
+        }))
+        sys.exit(1)
+    label = opt("--label") or os.path.basename(cwd)
+    n = 90 + (len(open(log).readlines()) if log and os.path.exists(log) else 1)
+    print(json.dumps({
+        "id": "cli:workspace:create",
+        "result": {"type": "workspace_created",
+                   "workspace": {"workspace_id": "w%d" % n, "label": label,
+                                 "number": n, "pane_count": 1, "tab_count": 1}},
+    }))
+    sys.exit(0)
+
+if argv[:2] == ["workspace", "rename"]:
+    print(json.dumps({
+        "id": "cli:workspace:rename",
+        "result": {"type": "workspace_info",
+                   "workspace": {"workspace_id": argv[2], "label": " ".join(argv[3:])}},
+    }))
+    sys.exit(0)
+
+sys.stderr.write("fake-herdr: unexpected argv %r\n" % (argv,))
+sys.exit(64)

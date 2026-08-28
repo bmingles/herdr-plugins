@@ -28,6 +28,20 @@ beside it; completed plans move to `.plans/archived/`.
 
 ### Completed
 
+- [vscode-workspace-adopt](archived/vscode-workspace-adopt.md) — the **inbound**
+  direction for `vscode-workspace-sync`: `bin/adopt` reads a `.code-workspace` file's
+  `folders` and creates the Herdr Spaces they describe, with `scripts/herdrvs` as the
+  shell entry point. Adopt and sync are **mutually exclusive per session** — a session
+  either has a configured `workspaceFile` or it does not — which removes the feedback
+  loop, the `mode: "active"` conflict and the `pinnedFolders` problem in one rule; adopt
+  exits 2 in a session sync manages. Probed on herdr 0.8.2 and recorded as
+  `docs/herdr-vscode-sync-facts.md` §19: `workspace create` does **not** dedupe by path,
+  and a nonexistent *or* relative `--cwd` **silently** roots the Space at `$HOME`, so
+  adopt dedupes against a live snapshot and `isdir`-checks every folder. **199 tests
+  pass** (baseline 139), plus end-to-end verification against a **real Herdr server** —
+  create, idempotent re-run, skip, `--relabel`, the guard, `herdrvs` and the plugin
+  action. See `## Implementation corrections` in the plan.
+
 - [vscode-sync-session-mapping](archived/vscode-sync-session-mapping.md) — each Herdr
   session now drives its own VS Code workspace file via a `sessions` name→config map,
   replacing the blunt "only the default session syncs" guard. Session name is derived
@@ -79,3 +93,4 @@ beside it; completed plans move to `.plans/archived/`.
 | 5 | [workspace-time-tracker](workspace-time-tracking.md) | Track time spent per Space, stopping on switch and on inactivity | complete |
 | 6 | [caffeinate-grace-tuning](caffeinate-grace-tuning.md) | Set idleGraceSec from measured false-idle gaps | in progress — run 1 inconclusive, instrument fixed, awaiting run 2 |
 | 7 | [vscode-sync-session-mapping](archived/vscode-sync-session-mapping.md) | Map each Herdr session name to its own VS Code workspace file | complete |
+| 8 | [vscode-workspace-adopt](archived/vscode-workspace-adopt.md) | Create Herdr Spaces from a `.code-workspace` file's folders, for sessions sync does not manage | complete |

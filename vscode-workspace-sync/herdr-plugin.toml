@@ -82,3 +82,25 @@ command = ["./bin/sync", "--reason", "action"]
 # No `doctor` action on purpose. A plugin action's stdout goes only to
 # `herdr plugin log list`, JSON-escaped -- the least legible channel available, and a
 # poor route for a diagnostic. Run `./bin/sync --doctor` directly instead; see README.
+
+# The inbound direction: create Spaces from a .code-workspace file's `folders`.
+#
+# Deliberately NOT an [[events]] hook, and never will be. `folders` is regenerable from
+# Herdr, which is why sync can run on twelve of them; a Space is not -- it owns tabs,
+# panes, running agents and scrollback -- so importing one can only ever be additive,
+# one-shot and explicitly asked for.
+#
+# The action is a convenience. The primary interface is `./bin/adopt` run directly (or
+# the `herdrvs` shell function in ../scripts/), because actions take NO arguments --
+# `herdr plugin action invoke` accepts only --plugin -- so there is no --dry-run and no
+# --file through this route, and stdout reaches only `herdr plugin log list`,
+# JSON-escaped. Same reasoning that keeps `--doctor` a flag rather than an action.
+#
+# Refuses outright in a session that has a configured workspaceFile: adopt and sync are
+# mutually exclusive per session. See src/adopt.py's `guard`.
+
+[[actions]]
+id = "adopt"
+title = "Adopt VS Code workspace folders as Spaces"
+contexts = ["global", "workspace"]
+command = ["./bin/adopt", "--reason", "action"]

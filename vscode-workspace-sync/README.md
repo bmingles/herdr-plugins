@@ -173,8 +173,11 @@ already gone by then. Add and remove roots through Herdr.
 
 ## How it works
 
-One entrypoint, `src/main.py`, reached through the `bin/sync` POSIX-sh shim, invoked three
-ways by `herdr-plugin.toml`:
+Two entrypoints, each behind its own POSIX-sh shim. `src/main.py` (via `bin/sync`) is
+the outbound direction described here; `src/adopt.py` (via `bin/adopt`) is the inbound
+one — see [The other direction](#the-other-direction-adopting-a-workspace-file).
+
+`src/main.py` is invoked three ways by `herdr-plugin.toml`:
 
 - `[[startup]]` — once when a Herdr server starts or takes over a live handoff, so the
   workspace file matches the restored session.
@@ -184,6 +187,9 @@ ways by `herdr-plugin.toml`:
   a `cd` gets picked up — see [Changing directory](#changing-directory).
 - `[[actions]]` — `sync`, for a manual resync. (Diagnostics are the `--doctor`
   *flag*, run directly — see Diagnostics.)
+
+`src/adopt.py` is registered only as the `adopt` action, never on an event: `folders` is
+regenerable and a Space is not, so importing can only be one-shot and additive.
 
 Every invocation does the same three things: read the authoritative Herdr state, compute
 the desired `folders`, and rewrite the file only if the result differs. **The event
@@ -244,6 +250,125 @@ full interactive `PATH`; one started from launchd carries almost nothing. So
 
 Herdr itself is reached through `$HERDR_BIN_PATH` (falling back to `herdr` on `PATH`)
 rather than the raw socket, per the plugin docs' portability guidance.
+
+## The other direction: adopting a workspace file
+
+`bin/sync` mirrors Herdr **into** a workspace file. `bin/adopt` goes the other way: it
+reads a `.code-workspace` file's `folders` and creates the Herdr Spaces they describe.
+
+Pick one per Herdr session. They are **mutually exclusive**, and adopt enforces it.
+
+| You want | Tool | Session config |
+| --- | --- | --- |
+| *"I already have a workspace file. Set Herdr up to match it."* | **adopt** | **no** `workspaceFile` for this session |
+| *"This is a dynamic workspace. Let VS Code follow whatever I do in Herdr."* | **sync** | a `workspaceFile` for this session |
+
+### Why not both
+
+The two directions look symmetric and are not. `folders` is **regenerable** — it can
+always be recomputed from Herdr and overwritten, which is why sync is safe on twelve
+event hooks. A Space is **not**: it owns tabs, panes, running agents and scrollback, so
+it can only ever be *added*. Adopt is therefore one-shot, additive and explicitly
+invoked, and is deliberately not registered on any event.
+
+Running both against one session would also break in three concrete ways, which the
+mutual-exclusivity rule removes at a stroke:
+
+- **A feedback loop.** Each create fires `workspace.created`, which runs the sync hook,
+  which rewrites the file.
+- **`mode: "active"`.** The file holds a single folder, so adopting from it and then
+  syncing truncates the Spaces straight back out.
+- **`pinnedFolders`.** Pins live in the file but must never become Spaces.
+
+### The guard
+
+Adopt refuses, exiting **2**, whenever this session resolves to a `workspaceFile`. The
+check calls `config.load()` — the same four resolution rules sync uses — so the two can
+never disagree about which session owns which file:
+
+| Situation | Adopt |
+| --- | --- |
+| no `config.json` at all | runs |
+| session has no entry, and is not the default reaching a top-level `workspaceFile` (rule 4) | runs |
+| `sessions[<this session>]` is set (rule 2) | **refuses** |
+| default session with a top-level `workspaceFile` (rule 3) | **refuses** |
+| `HERDR_VSCODE_SYNC_WORKSPACE_FILE` is set | **refuses** |
+| `config.json` exists but does not parse | **fails**, exit 1 — a typo'd sync config must not read as "no config" |
+
+### Usage
+
+```sh
+./bin/adopt --dry-run          # print the plan, create nothing
+./bin/adopt                    # create the missing Spaces
+./bin/adopt --file ~/x.code-workspace
+./bin/adopt --relabel          # also fix labels on Spaces that already exist
+```
+
+With no `--file`, adopt uses the single `*.code-workspace` in the current directory.
+Zero or more than one is an error naming them — it never guesses.
+
+`scripts/herdrvs` in this repo wraps that as a shell function. Source it from your shell
+config and `herdrvs` works from any project directory:
+
+```sh
+source /path/to/herdr-plugins/scripts/herdrvs
+cd ~/code/my-project && herdrvs --dry-run
+```
+
+It is a locator and nothing more — it finds the plugin root (via
+`$HERDR_VSCODE_SYNC_ROOT`, else `herdr plugin list --json`) and passes every argument
+through, so all the flags above work.
+
+There is also an `adopt` plugin action, for the one-click case:
+
+```sh
+herdr plugin action invoke adopt --plugin vscode-workspace-sync
+```
+
+It searches the **focused pane's** directory (a plugin command's own cwd is the plugin
+root, so `HERDR_PLUGIN_CONTEXT_JSON` is what supplies the real one). Direct invocation
+stays the primary interface, because actions accept no arguments — there is no
+`--dry-run` and no `--file` through that route, and stdout reaches only
+`herdr plugin log list`, JSON-escaped. Same reasoning that keeps `--doctor` a flag.
+
+### What adopt does, per folder
+
+Paths are resolved the way VS Code resolves them — a relative `path` is relative to the
+**workspace file's own directory**, not `$PWD` — then normalised by the same
+`resolve_path` the sync direction uses, so a path matches a Space by exactly the rule
+that emitted one.
+
+| Condition | Action |
+| --- | --- |
+| not an existing directory | **skip**, with a warning |
+| already the cwd of some Space | **exists**, nothing created; with `--relabel` and a differing `name`, renamed |
+| otherwise | **create** — `--cwd <absolute> [--label <name>] --no-focus` |
+
+`--label` is passed only when the file supplies a `name`; Herdr derives the label from
+the basename otherwise. Creates run in file order, so the sidebar matches the file when
+starting from empty. `--no-focus` throughout, so adopting never moves you.
+
+Entries that are unusable — not an object, no string `path`, or a `${...}` VS Code
+variable that cannot be expanded outside the editor — are warned about and dropped
+rather than being fatal.
+
+Spaces present in Herdr but **absent from the file** are listed and left alone. There is
+no `--close-extra`: closing a Space kills its tabs, panes and any running agent. A fresh
+session's initial Space is the usual entry in that list.
+
+A failed create is reported and the run continues; the process exits 1 if any failed.
+
+### Measured Herdr behaviour this defends against
+
+Probed on **herdr 0.8.2**; evidence in
+[`docs/herdr-vscode-sync-facts.md` §19](../docs/herdr-vscode-sync-facts.md). All three
+are **silent** — none of them produces an error:
+
+| Behaviour | Consequence |
+| --- | --- |
+| `workspace create` does **not** dedupe by path, and does not update the existing label | without adopt's own dedupe, every re-run would double the sidebar |
+| a `--cwd` naming a **nonexistent** directory succeeds, rooting the Space at `$HOME` | hence the `isdir` check on every folder |
+| a **relative** `--cwd` also lands at `$HOME` | hence resolving to absolute before the call |
 
 ## Logging and diagnostics
 
@@ -428,7 +553,7 @@ test a fix.
 
 ```sh
 cd vscode-workspace-sync
-/usr/bin/python3 -m unittest discover -s test -v     # 139 tests, stdlib unittest only
+/usr/bin/python3 -m unittest discover -s test -v     # 199 tests, stdlib unittest only
 /usr/bin/python3 -m py_compile src/*.py              # the syntax gate
 ```
 
@@ -438,10 +563,16 @@ PEP 604 `X | Y` runtime annotations, and `tomllib`, none of which are allowed. T
 type checker or linter in the loop to catch them.
 
 No module in `src/` may share a name with a stdlib module: `src` is `sys.path[0]` when
-`bin/sync` hands `src/main.py` to the interpreter, so `src/types.py` would shadow the
-stdlib `types` module and the very first stdlib import would die. That is why the JSON
+a shim hands `src/main.py` or `src/adopt.py` to the interpreter, so `src/types.py` would
+shadow the stdlib `types` module and the very first stdlib import would die.
+`test_adopt.ShimTest` asserts this against `sys.stdlib_module_names` on 3.10+. That is why the JSON
 shapes are documented at the top of `src/herdr.py`.
 
 `test/fixtures/snapshot.json` is a faithful transcription of a real `api snapshot` and its
 paths are the ones discovery observed; `test/fixtures/snapshot-portable.json` has the same
 shape with paths that exist on any POSIX machine, and is what the automated tests use.
+
+The adopt tests reach Herdr through `test/fake-herdr`, pointed at by `HERDR_BIN_PATH`,
+which logs every argv it is handed to `$FAKE_HERDR_LOG`. That is how "adopt passed an
+absolute, existing `--cwd`" is asserted — a property with no downstream check, since
+Herdr accepts a bad one silently.

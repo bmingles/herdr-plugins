@@ -1091,6 +1091,114 @@ Five hookable events that *do* fire for plain panes were added — `pane.focused
 next navigation. No hookable event exists for `cd` followed by staying put; that would
 need the rejected long-lived `events.subscribe` daemon.
 
+## 19. `workspace create` write semantics (follow-up, 2026-08-27)
+
+Probed for the **inbound** direction (`.code-workspace` → Spaces, `vscode-workspace-sync/src/adopt.py`).
+Everything above concerns reading Herdr; this is the first section about writing to it.
+
+**Herdr 0.8.2**, headless server in the devcontainer, throwaway `probe` session, driven
+entirely through `herdr workspace ...` over `$HERDR_SOCKET_PATH`.
+
+> **Harness note.** A pty is required, and its **size matters**. Started under
+> `script -qc "herdr --session probe" /dev/null`, the client got a 2-row viewport and
+> *every* pane spawn failed with `{"error":{"code":"workspace_create_failed",
+> "message":"ghostty error -2"}}` — `tab create` too, so it is a general pane-spawn
+> failure, not a `workspace create` bug. Re-running under a `pty.fork()` harness with
+> `TIOCSWINSZ` set to 220x60 made all of it work. Anyone reproducing this in a container
+> must set the winsize explicitly.
+
+### 19.1 No dedupe by path — **the finding the whole design turns on**
+
+```
+$ herdr workspace create --cwd /workspaces/herdr-plugins --label alpha --no-focus
+{...,"workspace":{"workspace_id":"w2","label":"alpha","number":2,...}}
+$ herdr workspace create --cwd /workspaces/herdr-plugins --label beta  --no-focus
+{...,"workspace":{"workspace_id":"w3","label":"beta","number":3,...}}
+
+$ herdr workspace list
+  w1 scratchpad
+  w2 alpha           <- /workspaces/herdr-plugins
+  w3 beta            <- /workspaces/herdr-plugins, same path, second Space
+```
+
+Creating with a `--cwd` that already backs a Space yields a **second Space**. It does
+**not** dedupe, and it does **not** update the first one's label. There is no
+`--if-missing`, and no error.
+
+So any caller that runs more than once must dedupe itself, against a live
+`api snapshot`, on the pane-joined path (§4). `adopt.plan_adoption` is that check; without
+it, every re-run would double the sidebar.
+
+### 19.2 A nonexistent `--cwd` silently succeeds, rooted at `$HOME`
+
+```
+$ herdr workspace create --cwd /workspaces/does-not-exist-xyz --label ghost --no-focus
+{...,"root_pane":{"cwd":"/home/vscode",...},"workspace":{"workspace_id":"w4","label":"ghost"}}
+```
+
+Exit 0, no error, no warning — and the Space is rooted at `$HOME`, not at the path
+asked for. Herdr does not validate the directory.
+
+This is worse than it first looks in a two-way setup: the stray Space is then a normal
+Space, so the **outbound** sync would mirror `$HOME` straight into the user's
+`.code-workspace`. The caller must `os.path.isdir` every path before the call.
+
+### 19.3 A relative `--cwd` is not resolved against the caller
+
+```
+$ cd /workspaces/herdr-plugins
+$ herdr workspace create --cwd ./docs --label reldocs --no-focus
+{...,"root_pane":{"cwd":"/home/vscode",...},"workspace":{"workspace_id":"w5",...}}
+```
+
+`./docs` exists relative to the invoking shell, but the Space still landed at `$HOME` —
+the same failure as 19.2. `--cwd` is not interpreted relative to the client's cwd
+(unsurprising, since the **server** spawns the pane, and its cwd is its own). Always
+pass an absolute path.
+
+### 19.4 `workspace rename` works and is the only label fixer
+
+```
+$ herdr workspace rename w2 renamed-alpha
+{...,"result":{"type":"workspace_info","workspace":{"workspace_id":"w2","label":"renamed-alpha",...}}}
+```
+
+Signature is `herdr workspace rename <WORKSPACE_ID> <LABEL>...` — the label is variadic,
+so an unquoted multi-word label is joined rather than rejected. Since `create` will not
+update an existing Space's label (19.1), this is the only route.
+
+### 19.5 Plugin actions take no arguments
+
+```
+$ herdr plugin action invoke --help
+Usage: herdr plugin action invoke [OPTIONS] <ACTION_ID>
+Options:
+      --plugin <ID>
+```
+
+`--plugin` is the only option. An action cannot be passed a path, a `--dry-run`, or
+anything else; its entire input is the environment Herdr builds for it. Combined with
+action stdout reaching only `herdr plugin log list` (JSON-escaped), that is why
+`vscode-workspace-sync` keeps `--doctor` and `adopt`'s flags on direct invocation and
+treats the action as a convenience.
+
+**Corollary, verified:** a plugin command's cwd is the **plugin root**, so an action must
+not use `os.getcwd()` to find the user's files. `HERDR_PLUGIN_CONTEXT_JSON`'s
+`focused_pane_cwd` is the invoking directory. Confirmed live: with the focused pane in
+`.../scratchpad`, `herdr plugin action invoke adopt` found
+`.../scratchpad/from-action.code-workspace` and resolved that file's relative folder
+paths against it, while the plugin root contained no workspace file at all.
+
+### Summary
+
+| # | Behaviour | Defence in `adopt.py` |
+| --- | --- | --- |
+| 19.1 | `create` does not dedupe by path or update labels | dedupe against `api snapshot` in `plan_adoption` |
+| 19.2 | nonexistent `--cwd` succeeds, rooted at `$HOME` | `os.path.isdir` before every create |
+| 19.3 | relative `--cwd` also lands at `$HOME` | `resolve_folder_path` → always absolute |
+| 19.4 | only `rename` can relabel | `--relabel`, opt-in |
+| 19.5 | actions take no args; cwd is the plugin root | flags on direct invocation; `discovery_dir` reads the context |
+
 ## Probing limitations worth recording
 
 - **Sidebar drag was driven through the socket API** (`workspace.move` /
@@ -1106,3 +1214,10 @@ need the rejected long-lived `events.subscribe` daemon.
   folder order and `name` rendering were confirmed visually rather than programmatically.
 - Extension-host churn was measured by **process identity**, which proves reactivation
   happened; the user-visible duration of the resulting re-index was not timed.
+- **Section 19 was probed in the devcontainer, not on the host**, against a headless
+  server with no attached human client. Pane spawn needed an explicitly sized pty (see
+  the harness note); `ghostty error -2` at a 2-row viewport is an artefact of that
+  environment and says nothing about `workspace create` on a normal host.
+- **`workspace create` was not probed for a path that exists but is not a directory**
+  (a regular file). `adopt` rejects that case with `isdir` before Herdr sees it, so the
+  behaviour is unobserved.

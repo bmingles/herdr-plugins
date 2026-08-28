@@ -1,0 +1,10 @@
+{
+  // Three folders, one with an explicit name. Comments and a trailing comma are here
+  // to prove adopt reads JSONC, not JSON.
+  "folders": [
+    { "path": "/tmp" },
+    { "path": "/usr", "name": "system" },
+    { "path": "/etc" },
+  ],
+  "settings": {},
+}

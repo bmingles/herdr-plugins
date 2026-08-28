@@ -35,6 +35,12 @@ WORKSPACE_FIXTURES = (
     "four-space-indent.code-workspace",
     "vscode-written.code-workspace",
     "canonical.code-workspace",
+    # Inbound-direction fixtures. They exist for `test_adopt`, but every one with a
+    # valid top-level `folders` member is also a free shape for the tokenizer sweep --
+    # a mixed-type array, and one whose entries are all relative paths.
+    "adopt-basic.code-workspace",
+    "adopt-relative.code-workspace",
+    "adopt-messy.code-workspace",
 )
 
 
