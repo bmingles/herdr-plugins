@@ -1,36 +1,42 @@
 {
-  // Absolute path to the .code-workspace file this plugin owns. Required, unless
-  // "sessions" below covers every session you run. "~" is expanded. The file must
-  // already exist -- the plugin will not create it.
-  "workspaceFile": "~/code/my-workspace.code-workspace",
+  // Keyed by Herdr session. Plugin registration is global -- every session's server runs
+  // this plugin -- so each session needs its own workspace file, or two of them will
+  // overwrite each other's "folders".
+  //
+  // Keys are session names, as printed in the first column of `herdr session list`.
+  // "default" is the session a plain `herdr` gives you. A session with no entry here
+  // syncs nothing and exits 0.
+  //
+  // "workspaceFile" is REQUIRED in every entry and is never inherited from the top
+  // level: two entries resolving to the same file is a hard error, which is the whole
+  // point of the map. "~" is expanded. The file must already exist -- the plugin will
+  // not create it. "mode" and "pinnedFolders" are optional per entry and fall back to
+  // the top-level values below.
+  "sessions": {
+    "default": {
+      "workspaceFile": "~/code/main.code-workspace",
+      "pinnedFolders": ["~/code/main"]
+    }
+    // "work": { "workspaceFile": "~/code/work.code-workspace",
+    //           "pinnedFolders": ["~/code/work"] },
+    // "oss":  { "workspaceFile": "~/code/oss.code-workspace", "mode": "active" }
+  },
 
   // "mirror" (default) -> folders mirrors every Space, in sidebar order.
   // "active"           -> folders holds only the focused Space.
+  // At the top level this is the default for any entry that omits it.
   "mode": "mirror",
 
   // Absolute paths always emitted first, before any Space, and never given a "name".
+  // At the top level this is the default for any entry that omits it.
+  //
   // Strongly recommended: whatever sits at folders[0] is rewritten whenever the first
   // Space changes, and changing folders[0] restarts VS Code's extension host. Pinning
   // one stable folder keeps all Space churn at index 1+, which costs nothing.
   "pinnedFolders": [],
 
-  // Optional. One workspace file per Herdr session, keyed by session name as shown by
-  // `herdr session list`. Plugin registration is global -- every session's server runs
-  // this plugin -- so without a map only the default session syncs and named sessions
-  // do nothing.
-  //
-  // A session listed here uses its own "workspaceFile" (required, never inherited);
-  // "mode" and "pinnedFolders" fall back to the top-level values above unless the entry
-  // sets them. "default" is a legal key and names the default session, so you can map
-  // every session here and drop the top-level "workspaceFile" entirely.
-  //
-  // A session that is running but absent from this map syncs nothing, exactly as a
-  // named session does today. Two entries pointing at the same file is a hard error:
-  // that is the two-servers-fighting-over-one-file case this map exists to prevent.
-  "sessions": {
-    // "default": { "workspaceFile": "~/code/main.code-workspace" },
-    // "work":    { "workspaceFile": "~/code/work.code-workspace",
-    //              "pinnedFolders": ["~/code/work"] },
-    // "oss":     { "workspaceFile": "~/code/oss.code-workspace", "mode": "active" }
-  }
+  // Single-session shorthand for sessions.default.workspaceFile, kept so older configs
+  // keep working. Ignored by every named session, so a setup with more than one session
+  // must use the map above.
+  // "workspaceFile": "~/code/main.code-workspace"
 }

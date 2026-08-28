@@ -3,34 +3,40 @@
 Plugins and research notes for [Herdr](https://herdr.dev), a terminal multiplexer for
 coding agents.
 
+All three are Python 3.9+, standard library only, no build step, no dependencies. macOS and
+Linux, Herdr 0.8.0 or newer.
+
 ## Plugins
 
-| Plugin | What it does |
-| --- | --- |
-| [`vscode-workspace-sync/`](vscode-workspace-sync/) | Keeps the `folders` array of a VS Code multi-root `.code-workspace` file in sync with your Herdr Spaces — create, close, rename or reorder a Space and the VS Code explorer follows, with no window reload. Also goes the [other way](vscode-workspace-sync/README.md#the-other-direction-adopting-a-workspace-file): `bin/adopt` creates Spaces *from* a workspace file you already have. Python 3.9+, standard library only, no build step. |
-| [`agent-caffeinate/`](agent-caffeinate/) | Keeps your machine awake for exactly as long as your coding agents are working, and lets it sleep a minute after they stop. No config required, plus an optional `☕ caffeinate` tab bar indicator. Python 3.9+, standard library only, no build step. |
-| [`workspace-time-tracker/`](workspace-time-tracker/) | Records how long you actually spend in each Space. Entries close on a switch, and close backdated to your last activity after a minute of quiet — so idle time is never billed as work. `track report` reads it back. Python 3.9+, standard library only, no build step. |
+| Plugin | What it does | Config needed |
+| --- | --- | --- |
+| [`agent-caffeinate/`](agent-caffeinate/) | Keeps your machine awake for exactly as long as your coding agents are working, and lets it sleep a minute after they stop. Optional `☕ caffeinate` tab bar indicator. | none |
+| [`workspace-time-tracker/`](workspace-time-tracker/) | Records how long you actually spend in each Space. Entries close on a switch, and close backdated to your last activity after a minute of quiet — so idle time is never billed as work. `track report` reads it back. | none |
+| [`vscode-workspace-sync/`](vscode-workspace-sync/) | Keeps the `folders` array of a VS Code multi-root `.code-workspace` file in sync with your Herdr Spaces — create, close, rename or reorder a Space and the VS Code explorer follows, with no window reload. `adopt` goes the other way, creating Spaces *from* a workspace file you already have. | **yes** — one JSON file naming the workspace file |
 
-Install a plugin straight from this repo:
-
-```sh
-herdr plugin install bmingles/herdr-plugins/vscode-workspace-sync
-```
-
-Or link a working tree while developing:
+Install one:
 
 ```sh
-herdr plugin link ./vscode-workspace-sync
+herdr plugin install bmingles/herdr-plugins/agent-caffeinate
 ```
 
-**Installing is not enough on its own.** Every plugin here also needs a `config.json` in
-the directory printed by `herdr plugin config-dir <plugin-id>`, and does nothing until it
-exists. Follow the plugin's own README for that — for this one,
-[**vscode-workspace-sync/README.md → Install**](vscode-workspace-sync/README.md#install)
-walks through the config file, a first `--doctor` run, and the initial sync.
+Then follow that plugin's README — each one's **Setup** section is four steps and gives
+every path literally.
 
-Hook output is invisible except through `herdr plugin log list --plugin <plugin-id>`;
-check it after any trigger rather than guessing.
+Two things that trip up every Herdr plugin, including these:
+
+- **Installing does not start anything.** Startup hooks run when a Herdr *server* boots. All
+  three plugins also recover on the next Space switch, which is the quickest way to start
+  them without restarting Herdr.
+- **Hook output is invisible** except through `herdr plugin log list --plugin <plugin-id>`,
+  JSON-escaped. That is why each plugin's real diagnostic is a `doctor` command you run in a
+  terminal, never a plugin action.
+
+Each plugin publishes its terminal commands at a fixed path under
+`~/.local/state/herdr/plugins/<plugin-id>/`, refreshed on every run, so the READMEs can hand
+out a literal path that survives a reinstall. No setup needed — nothing here asks you to
+change your `PATH`. Symlink one onto your `PATH` if you use it often; each README says
+where.
 
 ## Scripts
 
@@ -38,20 +44,30 @@ check it after any trigger rather than guessing.
 
 | File | Defines |
 | --- | --- |
-| [`scripts/herdrvs`](scripts/herdrvs) | `herdrvs` — create Herdr Spaces from the `.code-workspace` file in the current directory, by way of `vscode-workspace-sync`'s `bin/adopt`. |
+| [`scripts/bash_aliases.sh`](scripts/bash_aliases.sh) | `herdrvs` — `vscode-workspace-sync`'s `adopt`, reachable from any project directory. |
 
 ```sh
-source /path/to/herdr-plugins/scripts/herdrvs
+source /path/to/herdr-plugins/scripts/bash_aliases.sh
 cd ~/code/my-project && herdrvs --dry-run
 ```
 
-It is a locator only — it finds the plugin (via `$HERDR_VSCODE_SYNC_ROOT`, else
-`herdr plugin list --json`) and passes every argument through, so `--dry-run`, `--file`
-and `--relabel` all work. Every decision lives in the plugin.
+Locators only: each finds the plugin (the fixed launcher first, then this checkout) and
+passes every argument through. Every decision lives in the plugin.
 
-Adopt and sync are **mutually exclusive per Herdr session**: a session either has a
-configured `workspaceFile` and mirrors Herdr into it, or it has none and can import one.
+Note that adopt and sync are **mutually exclusive per Herdr session**: a session either has
+a configured `workspaceFile` and mirrors Herdr into it, or it has none and can import one.
 Adopt refuses, exiting 2, in a session sync manages.
+
+## Development
+
+```sh
+herdr plugin link ./agent-caffeinate                       # run a working tree
+cd agent-caffeinate && python3 -m unittest discover -s test
+```
+
+`herdr plugin link` picks up source changes on the next hook invocation — there is nothing
+to build. The floor is **Python 3.9**, which stock macOS ships; the tests are the only thing
+that catches a 3.10+ construct.
 
 ## Docs
 
@@ -71,5 +87,5 @@ Adopt refuses, exiting 2, in a session sync manages.
 
 ## Plans
 
-`.plans/` tracks in-flight and completed work; `.plans/PLAN.md` is the index and the
-source of truth for status.
+`.plans/` tracks in-flight and completed work; `.plans/PLAN.md` is the index and the source
+of truth for status.

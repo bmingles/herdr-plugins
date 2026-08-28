@@ -33,13 +33,22 @@ EXIT_CONFIG = 1
 EXIT_SOCKET = 2
 EXIT_USAGE = 64
 
+# This file is `<plugin root>/src/main.py`, so the shim two levels up is what a generated
+# launcher must exec. Derived from `__file__` rather than from `$HERDR_PLUGIN_ROOT`,
+# which is unset when the user runs the command by hand.
+ENTRYPOINT = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "bin", "track")
+
 
 class Paths(object):
-    __slots__ = ("state_dir", "session_dir", "lock", "log", "current", "entries",
-                 "status")
+    __slots__ = ("state_dir", "session_dir", "launcher", "lock", "log", "current",
+                 "entries", "status")
 
     def __init__(self, state_dir, socket_path, env=None):
         self.state_dir = state_dir
+        # Shared by every session, like `entries` and unlike everything keyed on the
+        # socket: the PATH symlink that reaches it is one line in the user's shell setup.
+        self.launcher = os.path.join(state_dir, "track")
         self.session_dir = daemonize.session_dir(state_dir, socket_path)
         self.lock = os.path.join(self.session_dir, "daemon.lock")
         self.log = os.path.join(self.session_dir, "daemon.log")
@@ -228,6 +237,8 @@ def cmd_daemon(args):
     except config_mod.ConfigError as exc:
         sys.stderr.write("track: %s\n" % exc)
         return EXIT_CONFIG
+
+    daemonize.write_launcher(paths.launcher, ENTRYPOINT)
 
     if args.restart:
         _stop_running(paths, quiet=True)
@@ -436,6 +447,10 @@ def cmd_doctor(_args):
     entries = store.read_entries(paths.entries)
     out.write("  entries recorded    : %d\n" % len(entries))
     out.write("  log                 : %s\n" % paths.log)
+    out.write("  launcher            : %s%s\n"
+              % (paths.launcher,
+                 "" if os.access(paths.launcher, os.X_OK)
+                 else "  (not written yet -- start the daemon)"))
 
     if socket_path:
         try:

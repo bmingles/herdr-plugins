@@ -35,6 +35,8 @@ command = ["./bin/agent-caffeinate", "daemon", "--restart"]
 # diagnostic, so its output going unread is fine.
 #
 # The tab bar indicator is not an action either, for the same reason: `ui.tab_bar_right`
-# runs a plain command on an interval and renders its stdout, so `bin/agent-caffeinate
-# indicator` belongs in the user's own config.toml, not here. A plugin cannot write that
-# file. See README -> Status indicator.
+# runs a plain command on an interval and renders its stdout, so the entry belongs in the
+# user's own config.toml, not here -- a plugin cannot write that file. What it points at is
+# the fixed shim the daemon maintains at
+# `~/.local/state/herdr/plugins/agent-caffeinate/agent-caffeinate`, because this plugin's
+# root carries a content hash that moves on reinstall. See README -> Status indicator.

@@ -16,6 +16,7 @@ import sys
 import config
 import folders as folders_mod
 import herdr
+import launchers
 import write as write_mod
 
 EXIT_OK = 0
@@ -101,6 +102,13 @@ def run_doctor(cfg, reason):
     log("  pinnedFolders  : %s" % (cfg.pinned_folders or "[]"))
     for warning in cfg.warnings:
         log("  warning        : %s" % warning)
+
+    log("")
+    installed = launchers.paths()
+    for i, name in enumerate(launchers.ENTRYPOINTS):
+        log("%-17s%s" % ("commands         : " if i == 0 else "                   ",
+                         installed.get(name)
+                         or os.path.join(launchers.PLUGIN_ROOT, "bin", name)))
 
     log("")
     log("herdr socket     : %s" % (os.environ.get(config.ENV_SOCKET_PATH) or "<unset>"))
@@ -219,6 +227,9 @@ def run_sync(cfg, reason):
 
 def main(argv=None):
     args = parse_args(argv if argv is not None else sys.argv[1:])
+    # Before the config load, deliberately: a bad config is exactly when the user needs
+    # `--doctor`, and they cannot run it without a path to this plugin.
+    launchers.refresh()
 
     try:
         cfg = config.load()

@@ -362,5 +362,35 @@ class TestSessionMap(ConfigCase):
         )
 
 
+class XdgBaseDirTest(unittest.TestCase):
+    """The fallback used when the *user* starts `sync --doctor`, not Herdr.
+
+    Herdr injects HERDR_PLUGIN_CONFIG_DIR into hooks but not into a terminal, and resolves
+    it through XDG_CONFIG_HOME. A disagreement here would have a hand-run `--doctor`
+    reporting "no config file" while the hooks read one perfectly well.
+    """
+
+    def test_herdrs_own_env_wins(self):
+        self.assertEqual(
+            config.config_dir({"HERDR_PLUGIN_CONFIG_DIR": "/from/herdr",
+                               "XDG_CONFIG_HOME": "/xdg"}),
+            "/from/herdr")
+
+    def test_xdg_config_home_is_honoured(self):
+        self.assertEqual(config.config_dir({"XDG_CONFIG_HOME": "/xdg"}),
+                         "/xdg/herdr/plugins/config/" + config.PLUGIN_ID)
+
+    def test_the_default_is_the_path_the_readme_hands_out(self):
+        self.assertEqual(
+            config.config_dir({}),
+            os.path.join(os.path.expanduser("~"), ".config", "herdr", "plugins",
+                         "config", config.PLUGIN_ID))
+
+    def test_a_relative_xdg_value_is_ignored(self):
+        self.assertTrue(
+            config.config_dir({"XDG_CONFIG_HOME": "relative"}).startswith(
+                os.path.expanduser("~")))
+
+
 if __name__ == "__main__":
     unittest.main()

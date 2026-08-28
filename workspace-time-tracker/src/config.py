@@ -27,13 +27,22 @@ class ConfigError(Exception):
     """Fatal configuration problem. The message is user-facing."""
 
 
+# Herdr resolves both of these through the XDG base directories -- verified against
+# `herdr plugin config-dir` and against the state directory it creates at install, with
+# and without XDG_CONFIG_HOME / XDG_STATE_HOME set. The env vars above are what a hook
+# gets; these fallbacks are for a run the user starts, which must land in the same place.
+# A relative XDG value is invalid per the spec and ignored.
+
+
 def config_dir(env=None):
     env = env or os.environ
     from_env = env.get("HERDR_PLUGIN_CONFIG_DIR")
     if from_env:
         return from_env
-    return os.path.expanduser(
-        os.path.join("~", ".config", "herdr", "plugins", "config", PLUGIN_ID))
+    base = env.get("XDG_CONFIG_HOME")
+    if not base or not os.path.isabs(base):
+        base = os.path.expanduser(os.path.join("~", ".config"))
+    return os.path.join(base, "herdr", "plugins", "config", PLUGIN_ID)
 
 
 def config_path(env=None):
@@ -45,8 +54,10 @@ def state_dir(env=None):
     from_env = env.get("HERDR_PLUGIN_STATE_DIR")
     if from_env:
         return from_env
-    return os.path.expanduser(
-        os.path.join("~", ".local", "state", "herdr", "plugins", PLUGIN_ID))
+    base = env.get("XDG_STATE_HOME")
+    if not base or not os.path.isabs(base):
+        base = os.path.expanduser(os.path.join("~", ".local", "state"))
+    return os.path.join(base, "herdr", "plugins", PLUGIN_ID)
 
 
 class Config(object):

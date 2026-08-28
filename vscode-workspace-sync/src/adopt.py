@@ -27,6 +27,7 @@ import config
 import folders as folders_mod
 import herdr
 import jsonc
+import launchers
 
 EXIT_OK = 0
 EXIT_FAIL = 1
@@ -474,6 +475,7 @@ def parse_args(argv):
 def main(argv=None):
     args = parse_args(argv if argv is not None else sys.argv[1:])
     env = os.environ
+    launchers.refresh(env)
     session = config.resolve_session_name(env)
 
     try:

@@ -28,14 +28,27 @@ EXIT_OK = 0
 EXIT_CONFIG = 1
 EXIT_SOCKET = 2
 
+# This file is `<plugin root>/src/main.py`, so the shim two levels up is the entrypoint
+# a generated launcher must exec. Derived from `__file__` rather than from
+# `$HERDR_PLUGIN_ROOT`, which is unset when the user runs the command by hand.
+ENTRYPOINT = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "bin", "agent-caffeinate")
+
 
 class Paths(object):
     """Everything the daemon writes, namespaced per Herdr server."""
 
-    __slots__ = ("session_dir", "lock", "log", "inhibitor_state", "status")
+    __slots__ = ("root", "session_dir", "launcher", "lock", "log", "inhibitor_state",
+                 "status")
 
     def __init__(self, state_dir, socket_path):
         self.session_dir = daemonize.session_dir(state_dir, socket_path)
+        # Shared by every session, unlike everything below it: the tab bar entry and
+        # the PATH symlink that reach it are one line each in the user's own files, not
+        # one per Herdr server.
+        self.root = state_dir
+        self.launcher = os.path.join(state_dir, "agent-caffeinate")
         self.lock = os.path.join(self.session_dir, "daemon.lock")
         self.log = os.path.join(self.session_dir, "daemon.log")
         self.inhibitor_state = os.path.join(self.session_dir, "inhibitor.json")
@@ -199,6 +212,8 @@ def cmd_daemon(args):
     except config_mod.ConfigError as exc:
         sys.stderr.write("agent-caffeinate: %s\n" % exc)
         return EXIT_CONFIG
+
+    daemonize.write_launcher(paths.launcher, ENTRYPOINT)
 
     if args.restart:
         _stop_running(paths, quiet=True)
@@ -474,6 +489,10 @@ def cmd_doctor(_args):
     out.write("  session key       : %s\n" % daemonize.session_key(socket_path))
     out.write("  session dir       : %s\n" % paths.session_dir)
     out.write("  log               : %s\n" % paths.log)
+    out.write("  launcher          : %s%s\n"
+              % (paths.launcher,
+                 "" if os.access(paths.launcher, os.X_OK)
+                 else "  (not written yet -- start the daemon)"))
 
     holder = daemonize.read_holder_pid(paths.lock)
     if holder and daemonize.pid_alive(holder):

@@ -290,6 +290,15 @@ span newlines.
   is half the job; the other half is a README stanza for `ui.sidebar.*.rows`.
 - **A plugin cannot write `config.toml`.** Every config-dependent UI surface is an
   instruction to the user, never something `herdr plugin install` sets up.
+- **Nothing outside the plugin can name `$HERDR_PLUGIN_ROOT`.** A GitHub install lands at
+  `~/.config/herdr/plugins/github/<id>-<hash>/<subdir>`, and the hash changes on reinstall,
+  so a `ui.tab_bar_right` entry, a `PATH` symlink or a README cannot point at
+  `bin/<command>` without the user first digging the path out of
+  `herdr plugin list --json`. Fix: have the plugin write a one-line `exec` shim into
+  `$HERDR_PLUGIN_STATE_DIR`, whose path *is* fixed
+  (`~/.local/state/herdr/plugins/<id>/`), and refresh it on every hook or daemon start so
+  it follows the plugin. Then the README hands out a literal path. All three plugins in
+  this repo do this.
 - **Adding a new agent *kind* is not a plugin's job** — it requires a Herdr binary
   update. Detection manifests only patch rules for kinds Herdr already identifies.
 

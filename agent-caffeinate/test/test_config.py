@@ -120,5 +120,48 @@ class ConfigTest(TempDirCase):
         self.assertEqual(config_mod.state_dir(self.env()), self.path("state"))
 
 
+class XdgBaseDirTest(unittest.TestCase):
+    """The fallbacks used when the *user* starts a command, not Herdr.
+
+    Herdr injects HERDR_PLUGIN_{CONFIG,STATE}_DIR into hooks but not into a terminal, and
+    it resolves both through the XDG base directories. If these fallbacks disagreed, a
+    hand-run `doctor` would read a different directory than the daemon writes -- silently
+    empty, for anyone who sets XDG_STATE_HOME.
+    """
+
+    def test_herdrs_own_env_wins_over_everything(self):
+        env = {"HERDR_PLUGIN_CONFIG_DIR": "/from/herdr/cfg",
+               "HERDR_PLUGIN_STATE_DIR": "/from/herdr/state",
+               "XDG_CONFIG_HOME": "/xdg/cfg", "XDG_STATE_HOME": "/xdg/state"}
+        self.assertEqual(config_mod.config_dir(env), "/from/herdr/cfg")
+        self.assertEqual(config_mod.state_dir(env), "/from/herdr/state")
+
+    def test_xdg_home_is_honoured(self):
+        env = {"XDG_CONFIG_HOME": "/xdg/cfg", "XDG_STATE_HOME": "/xdg/state"}
+        self.assertEqual(config_mod.config_dir(env),
+                         "/xdg/cfg/herdr/plugins/config/" + config_mod.PLUGIN_ID)
+        self.assertEqual(config_mod.state_dir(env),
+                         "/xdg/state/herdr/plugins/" + config_mod.PLUGIN_ID)
+
+    def test_the_default_is_the_path_the_readme_hands_out(self):
+        home = os.path.expanduser("~")
+        self.assertEqual(
+            config_mod.config_dir({}),
+            os.path.join(home, ".config", "herdr", "plugins", "config",
+                         config_mod.PLUGIN_ID))
+        self.assertEqual(
+            config_mod.state_dir({}),
+            os.path.join(home, ".local", "state", "herdr", "plugins",
+                         config_mod.PLUGIN_ID))
+
+    def test_a_relative_xdg_value_is_ignored(self):
+        # Invalid per the spec; falling back beats resolving it against whatever cwd the
+        # command happened to be run from.
+        env = {"XDG_CONFIG_HOME": "relative/cfg", "XDG_STATE_HOME": "relative/state"}
+        home = os.path.expanduser("~")
+        self.assertTrue(config_mod.config_dir(env).startswith(home))
+        self.assertTrue(config_mod.state_dir(env).startswith(home))
+
+
 if __name__ == "__main__":
     unittest.main()

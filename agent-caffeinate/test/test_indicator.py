@@ -15,8 +15,9 @@ import time
 import unittest
 
 import config as config_mod
+import daemonize
 import main
-from _support import TempDirCase
+from _support import ENTRYPOINT, TempDirCase
 from test_e2e import DaemonHarness, wait_for
 
 
@@ -154,6 +155,59 @@ class IndicatorStateTest(TempDirCase):
         self.assertEqual(out.stdout.strip(), "%s caffeinate" % main.ICON_HOLDING)
 
 
+class LauncherTest(TempDirCase):
+    """The fixed-path shim that lets `config.toml` name the indicator without the user
+    hunting down a content-hashed plugin root."""
+
+    def setUp(self):
+        super().setUp()
+        self.paths = main.Paths(self.path("state"), "/nowhere/herdr.sock")
+
+    def write(self):
+        return daemonize.write_launcher(self.paths.launcher, ENTRYPOINT)
+
+    def test_it_lands_at_the_documented_path_and_is_executable(self):
+        # The README hands out `<state dir>/agent-caffeinate` verbatim; if this moves,
+        # every config.toml and PATH symlink built from that README breaks silently.
+        self.assertEqual(self.paths.launcher,
+                         os.path.join(self.paths.root, "agent-caffeinate"))
+        self.assertEqual(self.write(), self.paths.launcher)
+        self.assertTrue(os.access(self.paths.launcher, os.X_OK))
+        with open(self.paths.launcher) as fh:
+            body = fh.read()
+        self.assertTrue(body.startswith("#!/bin/sh\n"))
+        self.assertIn('exec %s "$@"' % ENTRYPOINT, body)
+
+    def test_it_repoints_at_a_moved_plugin_root(self):
+        # What a reinstall looks like: the shim names yesterday's checkout.
+        with open(self.paths.launcher, "w") as fh:
+            fh.write("#!/bin/sh\nexec /gone/bin/agent-caffeinate \"$@\"\n")
+        self.write()
+        with open(self.paths.launcher) as fh:
+            self.assertNotIn("/gone/", fh.read())
+
+    def test_it_restores_a_lost_executable_bit(self):
+        self.write()
+        os.chmod(self.paths.launcher, 0o644)
+        self.write()
+        self.assertTrue(os.access(self.paths.launcher, os.X_OK))
+
+    def test_rewriting_an_intact_launcher_does_not_touch_the_file(self):
+        # `--ensure` runs on every workspace.focused, so the common path must be a read.
+        self.write()
+        before = os.stat(self.paths.launcher)
+        self.write()
+        after = os.stat(self.paths.launcher)
+        self.assertEqual((before.st_ino, before.st_mtime_ns),
+                         (after.st_ino, after.st_mtime_ns))
+
+    def test_an_unwritable_state_dir_is_not_fatal(self):
+        # An optional tab bar entry must never be able to take the daemon down.
+        os.chmod(self.paths.root, 0o500)
+        self.addCleanup(os.chmod, self.paths.root, 0o700)
+        self.assertEqual(self.write(), self.paths.launcher)
+
+
 class IndicatorE2ETest(DaemonHarness):
     def test_the_indicator_tracks_a_real_hold(self):
         self.start_daemon()
@@ -180,6 +234,27 @@ class IndicatorE2ETest(DaemonHarness):
         self.assertTrue(
             wait_for(lambda: self.run_cli("indicator").stdout == "", interval=0.15),
             "the indicator never cleared after the release")
+
+    def test_the_daemon_writes_a_launcher_that_renders_the_same_line(self):
+        self.start_daemon()
+        launcher = os.path.join(self.path("state"), "agent-caffeinate")
+        self.assertTrue(wait_for(lambda: os.access(launcher, os.X_OK), interval=0.1),
+                        "the daemon never wrote the indicator launcher")
+
+        self.server.set_statuses({"w1:p1": "working"})
+        self.assertTrue(
+            wait_for(lambda: self.run_cli("indicator").stdout != "", interval=0.15),
+            "the indicator never showed the hold")
+
+        # This is exactly what Herdr runs for a ui.tab_bar_right command entry.
+        result = subprocess.run([launcher, "indicator"], env=self.env(),
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "%s caffeinate" % main.ICON_HOLDING)
+
+        flagged = subprocess.run([launcher, "indicator", "--label", "AWAKE"],
+                                 env=self.env(), capture_output=True, text=True)
+        self.assertEqual(flagged.stdout.strip(), "%s AWAKE" % main.ICON_HOLDING)
 
     def test_the_indicator_renders_nothing_with_no_daemon_running(self):
         result = self.run_cli("indicator")
