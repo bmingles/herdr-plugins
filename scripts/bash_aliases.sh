@@ -3,15 +3,23 @@
 #
 #     source /path/to/herdr-plugins/scripts/bash_aliases.sh
 #
-# Defines `herdrvs`: create Herdr Spaces from the .code-workspace file in the current
-# directory. All arguments pass straight through to vscode-workspace-sync's `bin/adopt`,
-# so `herdrvs --dry-run`, `herdrvs --file x.code-workspace` and `herdrvs --relabel` work.
+# Defines:
 #
-#     herdrvs [--dry-run|--file X|--relabel]
+#   `herdrvs`  create Herdr Spaces from the .code-workspace file in the current
+#              directory. All arguments pass straight through to vscode-workspace-sync's
+#              `bin/adopt`, so `herdrvs --dry-run`, `herdrvs --file x.code-workspace` and
+#              `herdrvs --relabel` work.
 #
-# Only `adopt` gets a function. It is the one command here run from arbitrary project
-# directories, so a short name earns its keep; the rest are reached by the literal launcher
-# path their README gives, or a symlink of your choosing.
+#                  herdrvs [--dry-run|--file X|--relabel]
+#
+#   `herdrs`   run `herdr` with `--session` set to the current directory basename.
+#              Additional arguments pass through, e.g. `herdrs space`.
+#
+#                  herdrs [args...]
+#
+# These are the commands here run from arbitrary project directories, so short names
+# earn their keep; the rest are reached by the literal launcher path their README gives,
+# or a symlink of your choosing.
 #
 # This is a locator and nothing else -- every decision (path resolution, deduping against
 # live Spaces, the sync/adopt mutual-exclusivity guard) lives in
@@ -52,4 +60,8 @@ herdrvs() {
     local cmd
     cmd=$(_herdr_plugin_cmd vscode-workspace-sync adopt) || return 127
     "$cmd" "$@"
+}
+
+herdrs() {
+    herdr --session "${PWD##*/}" "$@"
 }
