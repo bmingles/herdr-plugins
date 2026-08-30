@@ -21,6 +21,14 @@ notifications — then works as it does for a local agent, because Herdr's state
 read terminal output, and terminal output crosses the container boundary unchanged.
 Container agent status was never a transport problem.
 
+**This is a different topology from Herdr running *inside* a devcontainer.** This
+skill covers a **host** Herdr watching an agent launched via `docker exec` — the
+`HERDR_AGENT` prefix above is a host-side concern. When Herdr's client, server, and
+agents all run **inside** the container instead, the worktree-path rule and
+bind-mount guard for `herdr worktree create` live in `devc-dev`'s
+[`herdr-devcontainer-worktrees`](https://github.com/bmingles/devc-dev/blob/main/.claude/skills/herdr-devcontainer-worktrees/SKILL.md)
+skill — a different concern, not a duplicate of this one.
+
 ## Launch an agent
 
 Find the container, then launch from a Herdr pane with the prefix and the agent's
