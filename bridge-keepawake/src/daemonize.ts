@@ -1,0 +1,203 @@
+/**
+ * Session-keyed paths, pid tracking, and the daemon's log file -- the Deno
+ * counterpart of agent-caffeinate's `src/daemonize.py`, with one deliberate
+ * architectural difference: **singleton locking lives entirely in `bin/bridge-keepawake`
+ * (the shell launcher), via the real `flock(1)` command, not in this module.**
+ *
+ * That split exists because `Deno.FsFile.lock()` (verified in this container's Deno
+ * 2.9.5) has **no non-blocking mode** -- unlike `fcntl.flock(fd, LOCK_EX | LOCK_NB)`,
+ * which agent-caffeinate's `daemonize.Lock.acquire()` relies on to fail fast when
+ * another daemon already holds the lock. Calling it from Deno blocks the calling
+ * process until the lock becomes available -- there is no way to ask "is it free right
+ * now" without potentially waiting forever. Closing the file while a lock() call is
+ * pending does not cancel it either (verified): the pending acquire is a live leak
+ * that eventually fires in the background against a resource the caller has already
+ * moved on from. None of that is compatible with a fast, synchronous "already
+ * running, do nothing" check.
+ *
+ * `flock(1)` has no such limitation -- `flock -n LOCKFILE -c CMD` atomically tries a
+ * non-blocking exclusive lock and only execs CMD if it succeeds, holding the lock for
+ * CMD's entire lifetime and releasing it automatically (kernel-level, crash-safe) when
+ * CMD exits for any reason, including a kill -9. So `bin/bridge-keepawake` wraps the
+ * real daemon process in `setsid -f flock -n LOCKFILE -- deno run … main.ts daemon`:
+ * the OS provides the exact non-blocking, crash-safe mutual exclusion this plugin
+ * needs, and this Deno module only has to agree with the shell script on *where* the
+ * lock file and the pid/status/log files live -- see `sessionKey` below.
+ *
+ * One consequence: passive "wedged daemon" displacement (a process that is alive, holds
+ * its lock, but has stopped making progress) is *not* automatic here the way it is in
+ * agent-caffeinate -- flock only ever tells you "alive or dead", never "hung". This
+ * plugin instead makes displacement an explicit operation: the `restart` action kills
+ * whatever pid it finds recorded before attempting a fresh `flock -n` start. See
+ * README -> "Permissions, corrected" / "What's simplified relative to agent-caffeinate".
+ */
+
+/**
+ * A short, stable, filesystem-safe key for one Herdr server, used to namespace
+ * pid/status/log files. Unlike agent-caffeinate's `session_key` (a SHA-256 prefix),
+ * this is a plain sanitized copy of the socket path, not a hash -- Deno's Web Crypto
+ * digest is async-only, and `bin/bridge-keepawake` (POSIX shell) needs to compute the
+ * *same* key for the lock file path without a hash function of its own. Sanitizing the
+ * path is trivial in both languages; hashing it would not be.
+ */
+export function sessionKey(socketPath: string | undefined): string {
+  const raw = socketPath ?? "nosocket";
+  const cleaned = raw.replace(/[^a-zA-Z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  return (cleaned || "nosocket").slice(-64);
+}
+
+export async function sessionDir(stateDir: string, socketPath: string | undefined): Promise<string> {
+  const path = `${stateDir}/${sessionKey(socketPath)}`;
+  await Deno.mkdir(path, { recursive: true });
+  return path;
+}
+
+/** The pid recorded in a plain pidfile, or undefined. Advisory only -- may be stale
+ * if the process crashed without cleaning up (flock's release is independent of this
+ * file; this is only ever used for `stop`/`status`/`doctor`/`restart` reporting). */
+export async function readHolderPid(path: string): Promise<number | undefined> {
+  try {
+    const text = await Deno.readTextFile(path);
+    const pid = parseInt(text.trim(), 10);
+    return Number.isFinite(pid) ? pid : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * `kill -0 <pid>` via a subprocess rather than `Deno.kill()`. `Deno.kill()` demands
+ * the **unscoped** `--allow-run` flag regardless of the signal sent -- verified in
+ * this container's Deno 2.9.5 -- which would widen this daemon's process-spawn grant
+ * to "anything", not just `setsid`/`flock`/`devc-bridge`/`kill`. Shelling out to the
+ * real `kill` binary keeps `--allow-run` an explicit allowlist. See README ->
+ * "Permissions, corrected".
+ */
+export async function pidAlive(pid: number | undefined): Promise<boolean> {
+  if (!pid) return false;
+  try {
+    const { success } = await new Deno.Command("kill", { args: ["-0", String(pid)] })
+      .output();
+    return success;
+  } catch {
+    return false;
+  }
+}
+
+/** `kill -TERM` or `kill -KILL` a pid via the same subprocess path as {@link pidAlive}. */
+export async function signalPid(pid: number, signal: "TERM" | "KILL"): Promise<boolean> {
+  try {
+    const { success } = await new Deno.Command("kill", {
+      args: [`-${signal}`, String(pid)],
+    }).output();
+    return success;
+  } catch {
+    return false;
+  }
+}
+
+const LAUNCHER_HEADER =
+  "# Generated by bridge-keepawake. Do not edit -- rewritten on every daemon start,\n" +
+  "# so it follows the plugin when a reinstall moves its directory.\n";
+
+/**
+ * Refresh the executable shim at `path` so it execs `entrypoint "$@"`.
+ *
+ * A GitHub-installed plugin root is `~/.config/herdr/plugins/github/<id>-<hash>/…`,
+ * where the hash changes on reinstall, so nothing outside the plugin can name
+ * `bin/bridge-keepawake` directly. The state directory never moves, so `doctor`'s one
+ * literal path keeps working after an upgrade. Rewrites only when the content or the
+ * executable bit is wrong, because `--ensure` runs this on every `workspace.focused`.
+ * Never throws: a failure here costs an optional shim, not the daemon.
+ */
+export async function writeLauncher(path: string, entrypoint: string): Promise<string> {
+  const body = `#!/bin/sh\n${LAUNCHER_HEADER}exec ${shQuote(entrypoint)} "$@"\n`;
+  try {
+    const existing = await Deno.readTextFile(path);
+    const info = await Deno.stat(path);
+    const executable = ((info.mode ?? 0) & 0o111) !== 0;
+    if (existing === body && executable) return path;
+  } catch {
+    // doesn't exist yet, or unreadable -- fall through and (re)write it.
+  }
+  const tmp = `${path}.tmp.${Deno.pid}`;
+  try {
+    await Deno.writeTextFile(tmp, body);
+    await Deno.chmod(tmp, 0o755);
+    await Deno.rename(tmp, path);
+  } catch {
+    try {
+      await Deno.remove(tmp);
+    } catch {
+      // best effort
+    }
+  }
+  return path;
+}
+
+function shQuote(s: string): string {
+  return `'${s.replace(/'/g, `'\\''`)}'`;
+}
+
+const LEVELS: Record<string, number> = { error: 0, warn: 1, info: 2, debug: 3 };
+const LOG_MAX_BYTES = 1 << 20; // 1 MB, then one rollover to .log.1
+
+/**
+ * Line-oriented log with a single size-capped rollover. Writes go to an explicitly
+ * opened/appended file rather than to stdout, so `status`/`doctor` can log to the same
+ * place without their own output being swallowed -- and so nothing depends on stdio
+ * redirection at spawn time.
+ */
+export class Log {
+  #path: string;
+  #level: number;
+  #echo: boolean;
+
+  constructor(path: string, level = "info", echo = false) {
+    this.#path = path;
+    this.#level = LEVELS[level] ?? 2;
+    this.#echo = echo;
+  }
+
+  async #rotateIfNeeded(): Promise<void> {
+    try {
+      const info = await Deno.stat(this.#path);
+      if (info.size < LOG_MAX_BYTES) return;
+    } catch {
+      return;
+    }
+    try {
+      await Deno.rename(this.#path, `${this.#path}.1`);
+    } catch {
+      // best effort
+    }
+  }
+
+  async #write(level: string, message: string): Promise<void> {
+    if ((LEVELS[level] ?? 2) > this.#level) return;
+    const stamp = new Date().toISOString();
+    const line = `${stamp} ${level.padEnd(5)} ${message}\n`;
+    await this.#rotateIfNeeded();
+    try {
+      await Deno.writeTextFile(this.#path, line, { append: true, create: true });
+    } catch {
+      // best effort -- a log write must never take the daemon down.
+    }
+    if (this.#echo) {
+      await Deno.stderr.write(new TextEncoder().encode(line));
+    }
+  }
+
+  error(message: string): Promise<void> {
+    return this.#write("error", message);
+  }
+  warn(message: string): Promise<void> {
+    return this.#write("warn", message);
+  }
+  info(message: string): Promise<void> {
+    return this.#write("info", message);
+  }
+  debug(message: string): Promise<void> {
+    return this.#write("debug", message);
+  }
+}

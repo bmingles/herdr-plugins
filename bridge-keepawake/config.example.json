@@ -1,0 +1,33 @@
+{
+  // Every key here is OPTIONAL and shown at its default. The plugin works with no
+  // config file at all -- create one only to change something.
+
+  // How often the whole session is polled. A poll is one fresh unix-socket
+  // `session.snapshot` call (~0.35ms measured for agent-caffeinate's identical
+  // pattern); 2s keeps the ping responsive without being busy.
+  "pollIntervalSec": 2,
+
+  // Agent statuses that count as "someone is working" -- ping while any pane reports
+  // one of these. `blocked` is deliberately absent: it means the agent is waiting on
+  // a human, so no work is in flight to protect. Add it if you'd rather the host stay
+  // awake while an agent waits for your answer.
+  "activeStatuses": ["working"],
+
+  // The command this plugin invokes to ping the host bridge. Bare "devc-bridge"
+  // resolves against the Herdr server's PATH; set an absolute path here (and update
+  // bin/bridge-keepawake's --allow-run allowlist to match, or the daemon will fail
+  // that specific spawn) if it's not on PATH.
+  "bridgeCommand": "devc-bridge",
+
+  // Free-form diagnostic label attached to each `devc-bridge ping <label>` call --
+  // never affects host behaviour. The daemon appends ":<active pane count>".
+  "pingLabel": "bridge-keepawake",
+
+  // "error" | "warn" | "info" | "debug". Nothing is emitted at "debug" today.
+  "logLevel": "info"
+
+  // No "idleGraceSec" and no "inhibitorCommand" -- unlike agent-caffeinate, this
+  // plugin holds no state and starts no inhibitor. The host (devc-bridge's own
+  // DEVC_BRIDGE_KEEPAWAKE_IDLE_MS) owns the idle timeout and the release decision.
+  // Adding either here would be re-implementing the host's job. See README.
+}

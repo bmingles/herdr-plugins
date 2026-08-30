@@ -1,0 +1,2 @@
+# Deno's cache/lock artifacts, if a lockfile ever gets generated locally.
+deno.lock

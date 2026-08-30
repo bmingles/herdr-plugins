@@ -6,6 +6,11 @@ your coding agents are working, and lets it sleep a minute after they stop.
 Step away mid-task and the agent keeps running. Come back to a finished job rather than a
 machine that dozed off thirty seconds after you left.
 
+**Running Herdr itself inside a devcontainer?** This plugin's inhibitor is a no-op
+there — the container has no `caffeinate`, and a Linux inhibitor asserted in a
+container namespace doesn't reach the host Mac. Use
+[`bridge-keepawake`](../bridge-keepawake/) instead in that case; never run both.
+
 ## Setup
 
 Needs Herdr 0.8.0+ and a Python 3.9+ on the machine. Nothing else — no config file, no

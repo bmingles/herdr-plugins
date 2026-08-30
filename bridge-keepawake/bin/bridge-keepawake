@@ -1,0 +1,131 @@
+#!/bin/sh
+# bin/bridge-keepawake -- resolve `deno` explicitly, never trusting the Herdr server's
+# PATH (inherited from whatever launched it, and effectively unknowable -- the same
+# caution agent-caffeinate applies to python3), then either run a read-only Deno
+# subcommand directly or, for `daemon`, wrap it in `setsid -f flock -n LOCKFILE` so
+# the OS provides atomic, non-blocking, crash-safe singleton locking.
+#
+# Locking lives HERE, in shell, not in the Deno code: `Deno.FsFile.lock()` has no
+# non-blocking mode (verified against this container's Deno 2.9.5 -- see
+# src/daemonize.ts's module comment for the full story), so the application-level
+# "try to acquire, fail fast if someone else has it" pattern agent-caffeinate uses in
+# Python is not expressible in Deno directly. `flock(1)` provides exactly that,
+# atomically, with the kernel releasing the lock automatically on any exit including
+# a crash -- so this script defers to it rather than reimplementing it.
+#
+# --allow-net/--allow-read/--allow-write are scoped to the one Herdr socket this
+# daemon talks to, plus its own state/config directories. --allow-run is an explicit
+# allowlist: `kill` (liveness probe / stop / restart) and whatever `devc-bridge`
+# resolves to (the one external command the daemon invokes). `setsid`/`flock`
+# themselves are run by *this shell script*, not by Deno, so they need no Deno
+# permission at all -- only the final `deno run …` step is a Deno.Command-style
+# concern, and by then setsid/flock have already done their job and exec'd into it.
+set -eu
+
+DENO=""
+for d in /usr/local/bin/deno /opt/homebrew/bin/deno "${HOME:-}/.deno/bin/deno"; do
+  if [ -x "$d" ]; then DENO="$d"; break; fi
+done
+if [ -z "$DENO" ]; then
+  DENO=$(command -v deno 2>/dev/null || true)
+fi
+if [ -z "$DENO" ]; then
+  echo "bridge-keepawake: no deno found on this machine." >&2
+  exit 127
+fi
+
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+
+SOCK="${HERDR_SOCKET_PATH:-}"
+STATE_DIR="${HERDR_PLUGIN_STATE_DIR:-${XDG_STATE_HOME:-${HOME:-/root}/.local/state}/herdr/plugins/bridge-keepawake}"
+CONFIG_DIR="${HERDR_PLUGIN_CONFIG_DIR:-${XDG_CONFIG_HOME:-${HOME:-/root}/.config}/herdr/plugins/config/bridge-keepawake}"
+
+# Must match src/daemonize.ts's `sessionKey()` exactly: a sanitized copy of the socket
+# path, not a hash (Deno's Web Crypto digest is async-only; this needs to be computable
+# in POSIX shell too, so both sides sanitize instead of hashing).
+SESSION_KEY=$(printf '%s' "${SOCK:-nosocket}" | sed -E 's/[^a-zA-Z0-9]+/_/g; s/^_+//; s/_+$//')
+[ -n "$SESSION_KEY" ] || SESSION_KEY=nosocket
+SESSION_DIR="$STATE_DIR/$SESSION_KEY"
+LOCKFILE="$SESSION_DIR/daemon.lock"
+LOGFILE="$SESSION_DIR/daemon.log"
+PIDFILE="$SESSION_DIR/daemon.pid"
+
+READ_ARG="--allow-read=$STATE_DIR,$CONFIG_DIR"
+WRITE_ARG="--allow-write=$STATE_DIR"
+NET_ARG="--allow-net"
+if [ -n "$SOCK" ]; then
+  NET_ARG="--allow-net=unix:$SOCK"
+  READ_ARG="$READ_ARG,$SOCK"
+  WRITE_ARG="$WRITE_ARG,$SOCK"
+fi
+
+# devc-bridge's resolved command, if configured to an absolute path, also needs to be
+# on the --allow-run allowlist. The bare name "devc-bridge" covers the common case
+# (resolved against PATH, same as any other --allow-run entry); a config.json
+# `bridgeCommand` override to an absolute path is covered by adding that literal
+# value here too -- cheap, and avoids widening the grant to "any command".
+BRIDGE_CMD="devc-bridge"
+if [ -f "$CONFIG_DIR/config.json" ]; then
+  configured=$(grep -o '"bridgeCommand"[[:space:]]*:[[:space:]]*"[^"]*"' "$CONFIG_DIR/config.json" 2>/dev/null | sed -E 's/.*:[[:space:]]*"([^"]*)"/\1/' || true)
+  [ -n "$configured" ] && BRIDGE_CMD="$configured"
+fi
+
+DENO_RUN="$DENO run $READ_ARG $WRITE_ARG $NET_ARG --allow-run=kill,$BRIDGE_CMD --allow-env $ROOT/src/main.ts"
+
+cmd="${1:-}"
+shift || true
+
+case "$cmd" in
+  stop|status|doctor)
+    exec $DENO_RUN "$cmd" "$@"
+    ;;
+  daemon)
+    for f in "$@"; do
+      case "$f" in
+        --foreground)
+          # Interactive debugging only: no flock, no detach, runs in this terminal.
+          exec $DENO_RUN daemon --foreground
+          ;;
+        --restart)
+          # An explicit, synchronous displacement: kill whatever pid is on record
+          # (alive or wedged -- restart does not distinguish, it just always
+          # replaces), then fall through to the normal flock-guarded start below.
+          # This is this plugin's whole answer to agent-caffeinate's "wedged daemon"
+          # problem -- see src/daemonize.ts's module comment for why passive
+          # auto-takeover isn't implemented here.
+          if [ -f "$PIDFILE" ]; then
+            old_pid=$(cat "$PIDFILE" 2>/dev/null || true)
+            if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
+              kill -TERM "$old_pid" 2>/dev/null || true
+              i=0
+              while kill -0 "$old_pid" 2>/dev/null && [ "$i" -lt 50 ]; do
+                sleep 0.1
+                i=$((i + 1))
+              done
+              kill -0 "$old_pid" 2>/dev/null && kill -KILL "$old_pid" 2>/dev/null || true
+            fi
+          fi
+          ;;
+      esac
+    done
+    mkdir -p "$SESSION_DIR"
+    # `setsid -f` forks and starts a new session before exec'ing, then returns
+    # immediately -- this script's counterpart to agent-caffeinate's double-fork +
+    # setsid, since Deno has no os.fork()/os.setsid(). `flock -n` inside that new
+    # session is what actually decides "am I the only one" -- if another daemon
+    # already holds $LOCKFILE, flock exits 1 immediately without running deno at
+    # all, which is exactly the silent no-op `--ensure`-style callers want and a
+    # harmless outcome for a plain `daemon` call too (see README -> "What's
+    # simplified relative to agent-caffeinate" for the one behavior this drops: a
+    # synchronous "already running" message for a manual, non-hook invocation).
+    # util-linux's `flock(1)` here takes the lock file immediately followed by the
+    # command -- no `--` separator (its own `--help` advertises one, but passing it
+    # literally fails with "flock: failed to execute --: No such file or directory",
+    # verified against this container's util-linux 2.39.3). Omit it.
+    setsid -f sh -c "exec flock -n '$LOCKFILE' $DENO_RUN daemon >>'$LOGFILE' 2>&1 </dev/null" &
+    ;;
+  *)
+    echo "usage: bridge-keepawake <daemon [--foreground|--restart]|stop|status|doctor>" >&2
+    exit 64
+    ;;
+esac

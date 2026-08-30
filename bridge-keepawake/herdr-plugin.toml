@@ -1,0 +1,36 @@
+id = "bridge-keepawake"
+name = "Bridge Keepawake"
+version = "0.1.0"
+min_herdr_version = "0.8.0"
+description = "Keep the devcontainer host awake while coding agents work, via devc-bridge"
+platforms = ["linux"]
+
+# No [[build]] block. Deno source run in place via `deno run` with explicit permission
+# flags (computed in bin/bridge-keepawake), so `herdr plugin install` has nothing to
+# compile -- matching agent-caffeinate's no-build-step property, just in Deno instead
+# of Python. See README -> "Why no [[build]] block".
+
+[[startup]]
+command = ["./bin/bridge-keepawake", "daemon"]
+
+# Self-heal only, same reasoning as agent-caffeinate: the daemon polls on its own; this
+# exists so a daemon that died, or a plugin linked mid-session, recovers on the next
+# focus change instead of at the next server boot. `--ensure` exits immediately when
+# the session lock is held, so the cost is one short process spawn per workspace focus.
+[[events]]
+on = "workspace.focused"
+command = ["./bin/bridge-keepawake", "daemon", "--ensure"]
+
+# `pane.agent_status_changed` is deliberately NOT hooked -- see README ->
+# "What was considered instead" and docs/herdr-daemon-facts.md.
+
+[[actions]]
+id = "restart"
+title = "Restart bridge-keepawake daemon"
+contexts = ["global"]
+command = ["./bin/bridge-keepawake", "daemon", "--restart"]
+
+# No `status` action, for the same reason agent-caffeinate has none: a plugin action's
+# stdout reaches the user only through `herdr plugin log list`, JSON-escaped -- a poor
+# channel for a diagnostic. Run `./bin/bridge-keepawake doctor` (or the fixed state-dir
+# shim) directly instead.

@@ -3,16 +3,27 @@
 Plugins and research notes for [Herdr](https://herdr.dev), a terminal multiplexer for
 coding agents.
 
-All three are Python 3.9+, standard library only, no build step, no dependencies. macOS and
-Linux, Herdr 0.8.0 or newer.
+**Host plugins are Python; container plugins are Deno.** The three original plugins
+below all run on the machine you sit at — Python 3.9+, standard library only, no build
+step, no dependencies, because that buys cross-OS support and a toolchain-free install
+on a machine we don't control. `bridge-keepawake` runs *inside* a devcontainer instead:
+one known OS, one known image, a toolchain we put there ourselves, so Deno (already
+what `devc`, `devc-core` and `devc-bridge` are written in) is the better fit there, not
+a departure from a rule — see [its README](bridge-keepawake/README.md#why-deno) for the
+full reasoning. Container Herdr does not inherit the host plugin line: none of the
+three host plugins has a meaningful container form (each acts on the host itself), so
+`bridge-keepawake` is the first of a new, separate line, not a port.
+
+macOS and Linux (bridge-keepawake: Linux only — see its README), Herdr 0.8.0 or newer.
 
 ## Plugins
 
-| Plugin | What it does | Config needed |
-| --- | --- | --- |
-| [`agent-caffeinate/`](agent-caffeinate/) | Keeps your machine awake for exactly as long as your coding agents are working, and lets it sleep a minute after they stop. Optional `☕ caffeinate` tab bar indicator. | none |
-| [`workspace-time-tracker/`](workspace-time-tracker/) | Records how long you actually spend in each Space. Entries close on a switch, and close backdated to your last activity after a minute of quiet — so idle time is never billed as work. `track report` reads it back. | none |
-| [`vscode-workspace-sync/`](vscode-workspace-sync/) | Keeps the `folders` array of a VS Code multi-root `.code-workspace` file in sync with your Herdr Spaces — create, close, rename or reorder a Space and the VS Code explorer follows, with no window reload. `adopt` goes the other way, creating Spaces *from* a workspace file you already have. | **yes** — one JSON file naming the workspace file |
+| Plugin | Runs on | What it does | Config needed |
+| --- | --- | --- | --- |
+| [`agent-caffeinate/`](agent-caffeinate/) | host | Keeps your machine awake for exactly as long as your coding agents are working, and lets it sleep a minute after they stop. Optional `☕ caffeinate` tab bar indicator. | none |
+| [`workspace-time-tracker/`](workspace-time-tracker/) | host | Records how long you actually spend in each Space. Entries close on a switch, and close backdated to your last activity after a minute of quiet — so idle time is never billed as work. `track report` reads it back. | none |
+| [`vscode-workspace-sync/`](vscode-workspace-sync/) | host | Keeps the `folders` array of a VS Code multi-root `.code-workspace` file in sync with your Herdr Spaces — create, close, rename or reorder a Space and the VS Code explorer follows, with no window reload. `adopt` goes the other way, creating Spaces *from* a workspace file you already have. | **yes** — one JSON file naming the workspace file |
+| [`bridge-keepawake/`](bridge-keepawake/) | **container** | Keeps the devcontainer **host** awake while agents work inside the container, by pinging `devc-bridge` — the host owns the inhibitor and the idle timeout, this plugin is a poll and a ping. Use this instead of `agent-caffeinate` when Herdr itself runs inside a devcontainer. | none |
 
 Install one:
 
@@ -66,8 +77,17 @@ cd agent-caffeinate && python3 -m unittest discover -s test
 ```
 
 `herdr plugin link` picks up source changes on the next hook invocation — there is nothing
-to build. The floor is **Python 3.9**, which stock macOS ships; the tests are the only thing
-that catches a 3.10+ construct.
+to build, for either language's plugins. The floor for the **host** plugins is
+**Python 3.9**, which stock macOS ships; their tests are the only thing that catches a
+3.10+ construct. This container's own Python (`python3-minimal`) is missing `json`,
+`unittest` and `pty`, so the host plugins' tests only run on a real host, not in here.
+
+`bridge-keepawake` (the one **container** plugin) has its own, separate test command —
+don't try to unify the two:
+
+```sh
+cd bridge-keepawake && deno task test
+```
 
 ## Docs
 
