@@ -7,6 +7,14 @@ beside it; completed plans move to `.plans/archived/`.
 
 ### Pending
 
+- [bridge-keepawake-indicator](bridge-keepawake-indicator.md) — give `bridge-keepawake`
+  the tab-bar indicator `agent-caffeinate` already has. Missing feature, not missing
+  config: the plugin's CLI has no `indicator` subcommand at all. It reports **local
+  ping state, not host inhibitor state** — the container cannot cheaply know whether
+  the host still holds `caffeinate`, and the tab-bar command must never block. A
+  30 s display-only hold absorbs the 2 s detection gap measured on 2026-09-04 at the
+  turn→subagent transition, so the icon does not flicker.
+
 - [herdr-daemon-discovery](herdr-daemon-discovery.md) — host probes answering the
   unknowns both new plugins depend on: does a daemon spawned from `[[startup]]` survive,
   what does a long-lived `events.subscribe` connection actually look like, and what
@@ -99,3 +107,4 @@ beside it; completed plans move to `.plans/archived/`.
 | 6 | [caffeinate-grace-tuning](archived/caffeinate-grace-tuning.md) | Set idleGraceSec from measured false-idle gaps | complete — 60 stands; false-idle ceiling measured at 22.1 s |
 | 7 | [vscode-sync-session-mapping](archived/vscode-sync-session-mapping.md) | Map each Herdr session name to its own VS Code workspace file | complete |
 | 8 | [vscode-workspace-adopt](archived/vscode-workspace-adopt.md) | Create Herdr Spaces from a `.code-workspace` file's folders, for sessions sync does not manage | complete |
+| 9 | [bridge-keepawake-indicator](bridge-keepawake-indicator.md) | Tab-bar `☕` for the container plugin, reporting local ping state with a flicker-absorbing hold |  |
