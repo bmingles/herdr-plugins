@@ -23,7 +23,7 @@ macOS and Linux (bridge-keepawake: Linux only — see its README), Herdr 0.8.0 o
 | [`agent-caffeinate/`](agent-caffeinate/) | host | Keeps your machine awake for exactly as long as your coding agents are working, and lets it sleep a minute after they stop. Optional `☕ caffeinate` tab bar indicator. | none |
 | [`workspace-time-tracker/`](workspace-time-tracker/) | host | Records how long you actually spend in each Space. Entries close on a switch, and close backdated to your last activity after a minute of quiet — so idle time is never billed as work. `track report` reads it back. | none |
 | [`vscode-workspace-sync/`](vscode-workspace-sync/) | host | Keeps the `folders` array of a VS Code multi-root `.code-workspace` file in sync with your Herdr Spaces — create, close, rename or reorder a Space and the VS Code explorer follows, with no window reload. `adopt` goes the other way, creating Spaces *from* a workspace file you already have. | **yes** — one JSON file naming the workspace file |
-| [`bridge-keepawake/`](bridge-keepawake/) | **container** | Keeps the devcontainer **host** awake while agents work inside the container, by pinging `devc-bridge` — the host owns the inhibitor and the idle timeout, this plugin is a poll and a ping. Use this instead of `agent-caffeinate` when Herdr itself runs inside a devcontainer. | none |
+| [`bridge-keepawake/`](bridge-keepawake/) | **container** | Keeps the devcontainer **host** awake while agents work inside the container, by pinging `devc-bridge` — the host owns the inhibitor and the idle timeout, this plugin is a poll and a ping. Use this instead of `agent-caffeinate` when Herdr itself runs inside a devcontainer. | none — optional `☕ keepawake` tab bar indicator |
 
 Install one:
 

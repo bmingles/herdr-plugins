@@ -15,6 +15,7 @@ export const KNOWN_KEYS = [
   "bridgeCommand",
   "pingLabel",
   "logLevel",
+  "indicatorHoldSec",
 ] as const;
 
 export const LOG_LEVELS = ["error", "warn", "info", "debug"] as const;
@@ -30,6 +31,7 @@ export interface Config {
   bridgeCommand: string;
   pingLabel: string;
   logLevel: LogLevel;
+  indicatorHoldSec: number;
   sourcePath: string;
   source: "defaults" | "file" | "defaults+env";
   warnings: string[];
@@ -70,13 +72,14 @@ function homeDir(env: Record<string, string | undefined>): string {
   return env.HOME ?? "/root";
 }
 
-function defaults(): Config {
+export function defaults(): Config {
   return {
     pollIntervalSec: 2,
     activeStatuses: ["working"],
     bridgeCommand: "devc-bridge",
     pingLabel: "bridge-keepawake",
     logLevel: "info",
+    indicatorHoldSec: 30,
     sourcePath: "",
     source: "defaults",
     warnings: [],
@@ -159,6 +162,10 @@ export async function load(env: Record<string, string | undefined> = Deno.env.to
       throw new ConfigError(`"pingLabel" must be a non-empty string\n  ${where}`);
     }
     cfg.pingLabel = raw.pingLabel;
+  }
+
+  if ("indicatorHoldSec" in raw) {
+    cfg.indicatorHoldSec = positive(raw.indicatorHoldSec, "indicatorHoldSec", where);
   }
 
   if ("logLevel" in raw) {

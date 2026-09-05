@@ -70,6 +70,64 @@ doesn't exist yet, the daemon hasn't started — see
 > convention `agent-caffeinate` established. It's rewritten on every daemon start, so
 > the path above keeps working after an upgrade.
 
+## Status indicator (optional)
+
+A `☕ keepawake` in the Herdr tab bar, shown while the plugin is pinging.
+
+**This reflects local ping state, not host inhibitor state.** The container cannot
+cheaply know whether the Mac is still awake — the host starts and stops `caffeinate` on
+its own idle timer (`DEVC_BRIDGE_KEEPAWAKE_IDLE_MS`, 5 minutes by default), and asking it
+would mean a subprocess and a round trip on every tab-bar refresh, which this indicator
+never does. So `☕ keepawake` means "this plugin is pinging the bridge right now (or was,
+within the last `indicatorHoldSec`)", not "the Mac is awake right now" — those two can
+diverge by up to that idle window after the last ping.
+
+Herdr's config file is `~/.config/herdr/config.toml`. **Create it if it does not exist**
+(`herdr --default-config > ~/.config/herdr/config.toml` writes the fully commented
+default — do this only if you have no config file yet, it overwrites). Add:
+
+```toml
+[ui]
+tab_bar_right = [
+  { type = "command", command = "~/.local/state/herdr/plugins/bridge-keepawake/bridge-keepawake indicator", interval_seconds = 5, timeout_seconds = 2 },
+]
+tab_bar_right_separator = " · "
+```
+
+Then `herdr server reload-config`. Paste that path verbatim — it is the same fixed shim
+from step 3, and Herdr runs the entry through `/bin/sh -lc`, so `~` expands. Keep each
+`{ … }` entry on **one line**: TOML inline tables cannot span newlines.
+
+What it renders:
+
+| Daemon | Renders |
+| --- | --- |
+| pinging, or last active within `indicatorHoldSec` | `☕ keepawake` |
+| running, last ping failed (`lastPingOk: false`) | `⚠ keepawake` |
+| running, idle beyond the hold | nothing — `--show-idle` renders `○ keepawake` |
+| status file older than the staleness bound (wedged) | `⚠ keepawake` |
+| not running, or no status file yet | nothing |
+
+"Nothing" is a real state rather than a blank gap: Herdr clears the entry on empty
+output, and separators appear only between *visible* entries.
+
+`⚠ keepawake` for a failing ping is the one place this indicator says something a naive
+"is the Mac awake" reading couldn't: a reachable daemon whose pings are being refused
+means the bridge or the host is down, which is exactly when you'd ask why your Mac slept.
+
+Flags: `--label TEXT` (default `keepawake`), `--icon GLYPH` for the holding state
+(default `☕`), and `--show-idle` to also render `○ keepawake` while running but idle.
+
+**Why the hold.** The plugin holds no state, so a raw "any pane active right now" read
+would flicker the icon across the ~2s gap between a turn ending and the CLI printing its
+next status line — see `indicatorHoldSec` in [Config](#config-optional). The daemon's own
+behavior — what it pings, and when — is unaffected either way; the hold only smooths what
+the tab bar shows.
+
+**No socket call, no `devc-bridge` subprocess.** `indicator` reads `daemon.json` and the
+pid file only, the same "must be cheap and must never block" constraint
+`agent-caffeinate`'s indicator documents.
+
 ## Why Deno
 
 This is the first non-Python plugin in this repo, and the first container-only one.

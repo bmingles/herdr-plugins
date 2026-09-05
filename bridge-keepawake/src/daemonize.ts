@@ -139,6 +139,24 @@ function shQuote(s: string): string {
   return `'${s.replace(/'/g, `'\\''`)}'`;
 }
 
+/**
+ * How old a status file must be before its recorded pid is presumed wedged --
+ * `pidAlive` says "alive", but the loop it should be running has stopped writing.
+ * Generous on purpose: the daemon rewrites `daemon.json` every poll, so a healthy one
+ * is never more than one interval behind, and the floor keeps a very short
+ * `pollIntervalSec` from making this trigger-happy. Mirrors agent-caffeinate's
+ * `_staleness_bounds` formula (`src/main.py`), for the same reasoning.
+ *
+ * Unlike agent-caffeinate, nothing in this plugin *acts* on staleness -- `flock`
+ * already gives an exact, kernel-enforced "alive or dead" (see this module's header),
+ * so there is no passive takeover to gate. This bound exists solely so `indicator`
+ * can render "wedged" rather than silently showing stale data as current; `doctor`
+ * does not (yet) report it separately.
+ */
+export function staleAfterSec(pollIntervalSec: number): number {
+  return Math.max(15, pollIntervalSec * 5);
+}
+
 const LEVELS: Record<string, number> = { error: 0, warn: 1, info: 2, debug: 3 };
 const LOG_MAX_BYTES = 1 << 20; // 1 MB, then one rollover to .log.1
 

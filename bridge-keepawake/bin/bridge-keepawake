@@ -76,7 +76,7 @@ cmd="${1:-}"
 shift || true
 
 case "$cmd" in
-  stop|status|doctor)
+  stop|status|doctor|indicator)
     exec $DENO_RUN "$cmd" "$@"
     ;;
   daemon)
@@ -125,7 +125,7 @@ case "$cmd" in
     setsid -f sh -c "exec flock -n '$LOCKFILE' $DENO_RUN daemon >>'$LOGFILE' 2>&1 </dev/null" &
     ;;
   *)
-    echo "usage: bridge-keepawake <daemon [--foreground|--restart]|stop|status|doctor>" >&2
+    echo "usage: bridge-keepawake <daemon [--foreground|--restart]|stop|status|doctor|indicator [--label TEXT] [--icon GLYPH] [--show-idle]>" >&2
     exit 64
     ;;
 esac

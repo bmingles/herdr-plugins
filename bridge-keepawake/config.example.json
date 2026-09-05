@@ -24,7 +24,12 @@
   "pingLabel": "bridge-keepawake",
 
   // "error" | "warn" | "info" | "debug". Nothing is emitted at "debug" today.
-  "logLevel": "info"
+  "logLevel": "info",
+
+  // Seconds the `indicator` subcommand keeps rendering the holding icon after the
+  // last poll where a pane was active. Display smoothing only -- it absorbs the ~2s
+  // detection gap at a turn/subagent transition and does not affect pinging at all.
+  "indicatorHoldSec": 30
 
   // No "idleGraceSec" and no "inhibitorCommand" -- unlike agent-caffeinate, this
   // plugin holds no state and starts no inhibitor. The host (devc-bridge's own

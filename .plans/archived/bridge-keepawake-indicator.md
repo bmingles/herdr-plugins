@@ -117,38 +117,61 @@ is user `config.toml`, not something a plugin declares, the same split
 
 ## Checklist
 
-- [ ] 1. `lastActiveAt` written into `daemon.json` by the daemon loop
-- [ ] 2. `indicator` subcommand in `src/main.ts` — pure state-file read, no subprocess
-- [ ] 3. `indicatorHoldSec` in `src/config.ts` with validation
-- [ ] 4. `indicator` routed in `bin/bridge-keepawake` alongside `stop|status|doctor`
-- [ ] 5. `config.example.json`: the new key at its default, with the display-only note
-- [ ] 6. README: a "Status indicator" section, the `config.toml` snippet, the render
+- [x] 1. `lastActiveAt` written into `daemon.json` by the daemon loop
+- [x] 2. `indicator` subcommand in `src/main.ts` — pure state-file read, no subprocess
+- [x] 3. `indicatorHoldSec` in `src/config.ts` with validation
+- [x] 4. `indicator` routed in `bin/bridge-keepawake` alongside `stop|status|doctor`
+- [x] 5. `config.example.json`: the new key at its default, with the display-only note
+- [x] 6. README: a "Status indicator" section, the `config.toml` snippet, the render
       table, and an explicit statement that it reflects **local ping state, not host
       inhibitor state**
-- [ ] 7. `herdr-plugins/README.md`: the plugin table's "Config needed" cell for
+- [x] 7. `herdr-plugins/README.md`: the plugin table's "Config needed" cell for
       `bridge-keepawake` notes the optional indicator
 
 ## Validation
 
-- [ ] `cd bridge-keepawake && deno task typecheck` — clean
-- [ ] `cd bridge-keepawake && deno task test` — all pass, count above the current 21
-- [ ] Unit: no status file → `""`, exit 0
-- [ ] Unit: pid on record is dead → `""`, exit 0
-- [ ] Unit: `activePanes` non-empty → `☕ keepawake`
-- [ ] Unit: `activePanes` empty and `lastActiveAt` 5 s ago → `☕ keepawake` (held)
-- [ ] Unit: `activePanes` empty and `lastActiveAt` 45 s ago → `""`; with
+- [x] `cd bridge-keepawake && deno task typecheck` — clean
+- [x] `cd bridge-keepawake && deno task test` — all pass, count above the current 21
+      (32 pass)
+- [x] Unit: no status file → `""`, exit 0
+- [x] Unit: pid on record is dead → `""`, exit 0
+- [x] Unit: `activePanes` non-empty → `☕ keepawake`
+- [x] Unit: `activePanes` empty and `lastActiveAt` 5 s ago → `☕ keepawake` (held)
+- [x] Unit: `activePanes` empty and `lastActiveAt` 45 s ago → `""`; with
       `--show-idle` → `○ keepawake`
-- [ ] Unit: same case with `indicatorHoldSec: 60` → `☕ keepawake` (hold honoured)
-- [ ] Unit: `lastPingOk: false` while active → `⚠ keepawake`
-- [ ] Unit: `updatedAt` beyond the staleness bound → `⚠ keepawake`
-- [ ] Unit: `--label`/`--icon` override both halves of the output
-- [ ] Assert the indicator path spawns **no** subprocess — run it with a `devc-bridge`
+- [x] Unit: same case with `indicatorHoldSec: 60` → `☕ keepawake` (hold honoured)
+- [x] Unit: `lastPingOk: false` while active → `⚠ keepawake`
+- [x] Unit: `updatedAt` beyond the staleness bound → `⚠ keepawake`
+- [x] Unit: `--label`/`--icon` override both halves of the output
+- [x] Assert the indicator path spawns **no** subprocess — run it with a `devc-bridge`
       stub on `PATH` that writes a marker file, and assert the marker is absent
-- [ ] Manual, in a container Herdr session: add the `tab_bar_right` entry,
-      `herdr server reload-config`, confirm `☕ keepawake` appears while an agent works
-      and clears ~30 s after it stops
+- [x] Manual, outside a container Herdr session (no real `devc-bridge`/host to hand):
+      exercised `bin/bridge-keepawake indicator` directly against hand-written
+      `daemon.json`/`daemon.pid` fixtures for every row of the render table — absent,
+      held, idle beyond hold (with and without `--show-idle`) — all matched. The real
+      `tab_bar_right` wiring and the live turn→subagent transition are still unverified
+      against an actual container Herdr session.
 - [ ] Manual: confirm the icon does **not** flicker across a turn→subagent transition,
-      the 2 s gap this hold exists for
+      the 2 s gap this hold exists for — needs a real container Herdr session, not run
+
+## Implementation corrections
+
+- **No existing staleness bound to "reuse."** The plan's Contract section says
+  "Staleness reuses whatever bound `doctor` already applies, so the two never
+  disagree" — but unlike `agent-caffeinate`, `doctor` here has no staleness check at
+  all: this plugin's liveness check is `flock`-backed `pidAlive` (exact alive/dead),
+  and passive "wedged" detection was deliberately *not* implemented (see
+  `daemonize.ts`'s module comment — `restart` is this plugin's answer instead). Added
+  `daemonize.staleAfterSec(pollIntervalSec)` (`max(15, pollIntervalSec * 5)`, mirroring
+  agent-caffeinate's `_staleness_bounds` formula) as a new shared bound that
+  `indicator` is the first consumer of; `doctor` does not report wedged state and this
+  plan didn't ask it to.
+- **`lastActiveAt` carry-forward is in-process, not re-derived per write.** The daemon
+  loop keeps it as a local variable seeded from any status file already on disk at
+  startup (covers a restart shortly after a previous run), updated on every active
+  poll, and threaded through both the loop's `writeStatus` call and the `finally`
+  block's exit write — rather than reading `daemon.json` back on every poll to find
+  the previous value.
 
 ## Relevant Files
 

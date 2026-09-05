@@ -24,7 +24,7 @@ const EXIT_OK = 0;
 const EXIT_CONFIG = 1;
 const EXIT_SOCKET = 2;
 
-interface Paths {
+export interface Paths {
   root: string;
   sessionDir: string;
   launcher: string;
@@ -33,7 +33,7 @@ interface Paths {
   status: string;
 }
 
-async function resolvePaths(stateDir: string, socketPath: string | undefined): Promise<Paths> {
+export async function resolvePaths(stateDir: string, socketPath: string | undefined): Promise<Paths> {
   const sessionDir = await daemonize.sessionDir(stateDir, socketPath);
   return {
     root: stateDir,
@@ -52,7 +52,7 @@ async function resolve(env: Record<string, string | undefined> = Deno.env.toObje
   return { cfg, socketPath, paths };
 }
 
-interface StatusPayload {
+export interface StatusPayload {
   pid: number;
   startedAt: number;
   socketPath: string | undefined;
@@ -61,9 +61,13 @@ interface StatusPayload {
   statuses: Record<string, string>;
   lastPingOk: boolean | null;
   updatedAt: number;
+  /** Epoch seconds of the last poll where `activePanes` was non-empty, carried
+   * forward unchanged on every other poll. Absent/non-numeric means "never active".
+   * Exists only for `indicator`'s flicker-absorbing hold -- see its module comment. */
+  lastActiveAt: number | undefined;
 }
 
-async function writeStatus(paths: Paths, payload: StatusPayload): Promise<void> {
+export async function writeStatus(paths: Paths, payload: StatusPayload): Promise<void> {
   const tmp = `${paths.status}.tmp`;
   try {
     await Deno.writeTextFile(tmp, JSON.stringify(payload));
@@ -106,6 +110,9 @@ async function runLoop(
   );
 
   let lastPingFailed = false;
+  // Carried forward across polls (and, by seeding from any status file already on
+  // disk, across a restart shortly after one) -- see `StatusPayload.lastActiveAt`.
+  let lastActiveAt: number | undefined = (await readStatus(paths))?.lastActiveAt;
   try {
     while (!stopFlag.stop) {
       let statuses: sock.PaneStatuses;
@@ -127,6 +134,7 @@ async function runLoop(
       const active = isAnyPaneActive(statuses, cfg.activeStatuses);
       let lastPingOk: boolean | null = null;
       if (active) {
+        lastActiveAt = Date.now() / 1000;
         const panes = activePaneIds(statuses, cfg.activeStatuses);
         const result = await bridgeMod.ping(cfg.bridgeCommand, `${cfg.pingLabel}:${panes.length}`);
         lastPingOk = result.ok;
@@ -150,6 +158,7 @@ async function runLoop(
         statuses,
         lastPingOk,
         updatedAt: Date.now() / 1000,
+        lastActiveAt,
       });
 
       await sleepInterruptible(cfg.pollIntervalSec, stopFlag);
@@ -164,6 +173,7 @@ async function runLoop(
       statuses: {},
       lastPingOk: null,
       updatedAt: Date.now() / 1000,
+      lastActiveAt,
     });
     await log.info(`daemon exit pid=${Deno.pid}`);
   }
@@ -330,14 +340,142 @@ async function cmdDoctor(): Promise<number> {
   return EXIT_OK;
 }
 
+// -- status indicator ---------------------------------------------------------------
+//
+// For a `ui.tab_bar_right` entry in the user's `config.toml`. Herdr re-runs that command
+// on the server every `interval_seconds` and renders its last line, so this path must be
+// cheap and must never block: it reads `daemon.json` and the pid file only. **No socket
+// call, no `devc-bridge` subprocess, no `Deno.Command` of any kind.** Herdr also clears
+// the entry on empty output, which is exactly the rendering wanted for "nothing to say"
+// -- so silence is the default and every branch below that has nothing to report
+// returns "".
+//
+// This answers "is the plugin pinging right now", not "is the Mac awake" -- see the
+// plan's "Why, and what it is honest about". The host's own idle timeout can lag this
+// by up to `DEVC_BRIDGE_KEEPAWAKE_IDLE_MS`; that gap is real and this indicator does
+// not paper over it.
+
+export const ICON_HOLDING = "☕"; // coffee cup
+export const ICON_IDLE = "○"; // hollow circle
+export const ICON_FAULT = "⚠"; // warning sign
+
+export type IndicatorState = "absent" | "wedged" | "fault" | "holding" | "idle";
+
+export interface IndicatorInfo {
+  state: IndicatorState;
+  activePanes: string[];
+  lastPingOk: boolean | null;
+}
+
+/**
+ * What the indicator should report, read from the daemon's own state files.
+ *
+ * `holding` covers both "pinging right now" and "last active within
+ * `indicatorHoldSec`" -- the anti-flicker hold from the plan's "Anti-flicker" section.
+ * It adds no state to the daemon loop: `lastActiveAt` is written every poll regardless
+ * of whether anything reads it, and this function is the only reader.
+ */
+export async function indicatorState(paths: Paths, cfg: configMod.Config): Promise<IndicatorInfo> {
+  const absent: IndicatorInfo = { state: "absent", activePanes: [], lastPingOk: null };
+
+  const pid = await daemonize.readHolderPid(paths.pid);
+  if (!pid || !(await daemonize.pidAlive(pid))) return absent;
+
+  const status = await readStatus(paths);
+  if (!status || typeof status.updatedAt !== "number") {
+    // The pid is alive but nothing has been written yet -- a daemon one poll into its
+    // life looks exactly like this, so it is not a fault worth drawing.
+    return absent;
+  }
+
+  const now = Date.now() / 1000;
+  const age = Math.max(0, now - status.updatedAt);
+  const activePanes = status.activePanes ?? [];
+  const lastPingOk = status.lastPingOk ?? null;
+
+  if (age >= daemonize.staleAfterSec(cfg.pollIntervalSec)) {
+    // Same rule `doctor` could apply -- see src/daemonize.ts's staleAfterSec. A wedged
+    // daemon's last-written fields are whatever they were when it stopped making
+    // progress, so they are not worth rendering as current fact.
+    return { state: "wedged", activePanes, lastPingOk };
+  }
+
+  if (lastPingOk === false) {
+    // The one place this indicator says something agent-caffeinate's cannot: a
+    // reachable daemon whose pings are being refused means the bridge or the host is
+    // down, exactly when a user asks why their Mac slept.
+    return { state: "fault", activePanes, lastPingOk };
+  }
+
+  const lastActiveAt = typeof status.lastActiveAt === "number" ? status.lastActiveAt : undefined;
+  const heldFor = lastActiveAt !== undefined ? now - lastActiveAt : undefined;
+  const activeNow = activePanes.length > 0;
+  if (activeNow || (heldFor !== undefined && heldFor <= cfg.indicatorHoldSec)) {
+    return { state: "holding", activePanes, lastPingOk };
+  }
+
+  return { state: "idle", activePanes, lastPingOk };
+}
+
+/** One line for the tab bar, or "" meaning render nothing. */
+export function indicatorText(info: IndicatorInfo, label: string, icon: string, showIdle: boolean): string {
+  if (info.state === "wedged" || info.state === "fault") {
+    return `${ICON_FAULT} ${label}`.trim();
+  }
+  if (info.state === "holding") {
+    return `${icon} ${label}`.trim();
+  }
+  if (info.state === "idle" && showIdle) {
+    return `${ICON_IDLE} ${label}`.trim();
+  }
+  return "";
+}
+
+async function cmdIndicator(args: { label: string; icon: string; showIdle: boolean }): Promise<number> {
+  const env = Deno.env.toObject();
+  let cfg: configMod.Config;
+  try {
+    cfg = await configMod.load(env);
+  } catch {
+    // A broken config file is `doctor`'s to report, not the tab bar's. Only the
+    // staleness and hold bounds depend on it, so fall back to defaults rather than go
+    // blind about a daemon that may well be running fine on an older, valid config.
+    cfg = configMod.defaults();
+  }
+
+  const socketPath = sock.defaultSocketPath(env);
+  const paths = await resolvePaths(configMod.stateDir(env), socketPath);
+  const info = await indicatorState(paths, cfg);
+  const text = indicatorText(info, args.label, args.icon, args.showIdle);
+  if (text) console.log(text);
+  return EXIT_OK;
+}
+
 function parseArgs(argv: string[]) {
   const [command, ...rest] = argv;
   const flags = new Set(rest);
-  return { command, flags };
+  return { command, rest, flags };
+}
+
+function parseIndicatorArgs(rest: string[]): { label: string; icon: string; showIdle: boolean } {
+  let label = "keepawake";
+  let icon = ICON_HOLDING;
+  let showIdle = false;
+  for (let i = 0; i < rest.length; i++) {
+    const arg = rest[i];
+    if (arg === "--label") {
+      label = rest[++i] ?? label;
+    } else if (arg === "--icon") {
+      icon = rest[++i] ?? icon;
+    } else if (arg === "--show-idle") {
+      showIdle = true;
+    }
+  }
+  return { label, icon, showIdle };
 }
 
 async function main(): Promise<number> {
-  const { command, flags } = parseArgs(Deno.args);
+  const { command, rest, flags } = parseArgs(Deno.args);
   switch (command) {
     case "daemon":
       return await cmdDaemon({ foreground: flags.has("--foreground") });
@@ -347,8 +485,13 @@ async function main(): Promise<number> {
       return await cmdStatus(flags.has("--json"));
     case "doctor":
       return await cmdDoctor();
+    case "indicator":
+      return await cmdIndicator(parseIndicatorArgs(rest));
     default:
-      console.log("usage: bridge-keepawake <daemon [--foreground]|stop|status [--json]|doctor>");
+      console.log(
+        "usage: bridge-keepawake <daemon [--foreground]|stop|status [--json]|doctor|" +
+          "indicator [--label TEXT] [--icon GLYPH] [--show-idle]>",
+      );
       return EXIT_OK;
   }
 }

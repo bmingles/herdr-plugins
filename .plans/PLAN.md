@@ -7,14 +7,6 @@ beside it; completed plans move to `.plans/archived/`.
 
 ### Pending
 
-- [bridge-keepawake-indicator](bridge-keepawake-indicator.md) — give `bridge-keepawake`
-  the tab-bar indicator `agent-caffeinate` already has. Missing feature, not missing
-  config: the plugin's CLI has no `indicator` subcommand at all. It reports **local
-  ping state, not host inhibitor state** — the container cannot cheaply know whether
-  the host still holds `caffeinate`, and the tab-bar command must never block. A
-  30 s display-only hold absorbs the 2 s detection gap measured on 2026-09-04 at the
-  turn→subagent transition, so the icon does not flicker.
-
 - [herdr-daemon-discovery](herdr-daemon-discovery.md) — host probes answering the
   unknowns both new plugins depend on: does a daemon spawned from `[[startup]]` survive,
   what does a long-lived `events.subscribe` connection actually look like, and what
@@ -23,6 +15,22 @@ beside it; completed plans move to `.plans/archived/`.
   in both plans below.
 
 ### Completed
+
+- [bridge-keepawake-indicator](archived/bridge-keepawake-indicator.md) — gave
+  `bridge-keepawake` the tab-bar `☕ keepawake` indicator `agent-caffeinate` already
+  has, via a new `indicator` subcommand that reads only `daemon.json` and the pid
+  file — no socket call, no `devc-bridge` subprocess. Reports **local ping state, not
+  host inhibitor state**, stated plainly in the README. A new `lastActiveAt` field and
+  a 30 s default `indicatorHoldSec` (config-overridable) absorb the ~2 s detection gap
+  at a turn→subagent transition so the icon doesn't flicker; a new
+  `daemonize.staleAfterSec` bound (mirroring agent-caffeinate's formula) catches a
+  wedged daemon, since this plugin's `flock`-based liveness check doesn't. **32 tests
+  pass** (baseline 21), including a subprocess-level test that stubs `devc-bridge` on
+  `PATH` and asserts it is never invoked. Manually exercised every render-table row
+  against hand-written status fixtures; the live `tab_bar_right` wiring and the real
+  turn→subagent transition are still unverified against an actual container Herdr
+  session. See `## Implementation corrections` in the plan — the plan's assumption
+  that `doctor` already applies a staleness bound to reuse didn't hold.
 
 - [caffeinate-grace-tuning](archived/caffeinate-grace-tuning.md) — `idleGraceSec` **stays
   60**, now on measured evidence rather than judgement. Run 1 (08-27) was worthless: the
@@ -107,4 +115,4 @@ beside it; completed plans move to `.plans/archived/`.
 | 6 | [caffeinate-grace-tuning](archived/caffeinate-grace-tuning.md) | Set idleGraceSec from measured false-idle gaps | complete — 60 stands; false-idle ceiling measured at 22.1 s |
 | 7 | [vscode-sync-session-mapping](archived/vscode-sync-session-mapping.md) | Map each Herdr session name to its own VS Code workspace file | complete |
 | 8 | [vscode-workspace-adopt](archived/vscode-workspace-adopt.md) | Create Herdr Spaces from a `.code-workspace` file's folders, for sessions sync does not manage | complete |
-| 9 | [bridge-keepawake-indicator](bridge-keepawake-indicator.md) | Tab-bar `☕` for the container plugin, reporting local ping state with a flicker-absorbing hold |  |
+| 9 | [bridge-keepawake-indicator](archived/bridge-keepawake-indicator.md) | Tab-bar `☕` for the container plugin, reporting local ping state with a flicker-absorbing hold | complete — 32 tests pass |

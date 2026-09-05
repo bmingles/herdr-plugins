@@ -20,6 +20,7 @@ Deno.test("config: defaults with no file at all", async () => {
     assert.equal(cfg.bridgeCommand, "devc-bridge");
     assert.equal(cfg.pingLabel, "bridge-keepawake");
     assert.equal(cfg.logLevel, "info");
+    assert.equal(cfg.indicatorHoldSec, 30);
     assert.equal(cfg.source, "defaults");
     assert.deepEqual(cfg.warnings, []);
   });
@@ -35,6 +36,7 @@ Deno.test("config: every key overridable from a config.json file", async () => {
         bridgeCommand: "/opt/devc-bridge/devc-bridge",
         pingLabel: "custom",
         logLevel: "debug",
+        indicatorHoldSec: 60,
       }),
     );
     const cfg = await config.load({ HERDR_PLUGIN_CONFIG_DIR: dir });
@@ -43,7 +45,15 @@ Deno.test("config: every key overridable from a config.json file", async () => {
     assert.equal(cfg.bridgeCommand, "/opt/devc-bridge/devc-bridge");
     assert.equal(cfg.pingLabel, "custom");
     assert.equal(cfg.logLevel, "debug");
+    assert.equal(cfg.indicatorHoldSec, 60);
     assert.equal(cfg.source, "file");
+  });
+});
+
+Deno.test("config: indicatorHoldSec must be a positive number", async () => {
+  await withTmpDir(async (dir) => {
+    await Deno.writeTextFile(`${dir}/config.json`, JSON.stringify({ indicatorHoldSec: 0 }));
+    await assert.rejects(() => config.load({ HERDR_PLUGIN_CONFIG_DIR: dir }), config.ConfigError);
   });
 });
 
