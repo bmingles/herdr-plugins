@@ -12,8 +12,11 @@
 #
 #                  herdrvs [--dry-run|--file X|--relabel]
 #
-#   `herdrs`   run `herdr` with `--session` set to the current directory basename.
-#              Additional arguments pass through, e.g. `herdrs space`.
+#   `herdrs`   run `herdr` with `--session` named after the current directory: its
+#              basename lowercased, each run of characters outside [a-z0-9._-] made one
+#              `-`, and `-` trimmed from both ends. devc-vscode's sessionNameForDir
+#              applies the same rule to find a window's session, so keep the two in
+#              step. Additional arguments pass through, e.g. `herdrs space`.
 #
 #                  herdrs [args...]
 #
@@ -62,6 +65,20 @@ herdrvs() {
     "$cmd" "$@"
 }
 
+# _herdr_session_name <dir> -> prints the session name `herdrs` uses for <dir>.
+_herdr_session_name() {
+    local base="${1%/}"
+    base="${base##*/}"
+    printf '%s' "$base" | LC_ALL=C tr '[:upper:]' '[:lower:]' |
+        LC_ALL=C sed -E 's/[^a-z0-9._-]+/-/g; s/^-+//; s/-+$//'
+}
+
 herdrs() {
-    herdr --session "${PWD##*/}" "$@"
+    local name
+    name=$(_herdr_session_name "$PWD")
+    if [ -z "$name" ]; then
+        echo "herdrs: cannot name a session after '${PWD##*/}'." >&2
+        return 2
+    fi
+    herdr --session "$name" "$@"
 }
