@@ -12,11 +12,16 @@
 #
 #                  herdrvs [--dry-run|--file X|--relabel]
 #
-#   `herdrs`   run `herdr` with `--session` named after the current directory: its
-#              basename lowercased, each run of characters outside [a-z0-9._-] made one
-#              `-`, and `-` trimmed from both ends. devc-vscode's sessionNameForDir
-#              applies the same rule to find a window's session, so keep the two in
-#              step. Additional arguments pass through, e.g. `herdrs space`.
+#   `herdrs`   run `herdr` with `--session` named after the current directory: its path
+#              relative to $HOME (or its absolute path, outside it or for $HOME itself),
+#              one part per folder joined with `.`. Each folder name is lowercased, `.`
+#              in it made `_`, each run of other characters outside [a-z0-9_-] made one
+#              `-`, and `-` trimmed from both ends; folders left empty are dropped. herdr
+#              sockets must fit in ~104 bytes, so a name over 40 characters keeps the whole
+#              folders at its end that fit and gains a hash of the whole name. ~/code/tools/devc-vscode gives
+#              `code.tools.devc-vscode`. devc-vscode's sessionNameForDir applies the same
+#              rule to find a window's session, so keep the two in step. Additional
+#              arguments pass through, e.g. `herdrs space`.
 #
 #                  herdrs [args...]
 #
@@ -67,17 +72,37 @@ herdrvs() {
 
 # _herdr_session_name <dir> -> prints the session name `herdrs` uses for <dir>.
 _herdr_session_name() {
-    local base="${1%/}"
-    base="${base##*/}"
-    printf '%s' "$base" | LC_ALL=C tr '[:upper:]' '[:lower:]' |
-        LC_ALL=C sed -E 's/[^a-z0-9._-]+/-/g; s/^-+//; s/-+$//'
+    local dir="${1%/}" home="${HOME%/}" rel name hash
+    case "$dir" in
+        "$home"/?*) rel="${dir#"$home"/}" ;;
+        *) rel="${dir#/}" ;;
+    esac
+    name=$(printf '%s' "$rel" | LC_ALL=C tr '[:upper:].' '[:lower:]_' |
+        LC_ALL=C sed -E 's#[^a-z0-9_/-]+#-#g; s#-*/-*#/#g; s#^-+##; s#-+$##; s#/+#/#g; s#^/##; s#/$##' |
+        tr '/' '.')
+    if [ "${#name}" -gt 40 ]; then
+        if command -v sha1sum >/dev/null 2>&1; then
+            hash=$(printf '%s' "$name" | sha1sum)
+        else
+            hash=$(printf '%s' "$name" | shasum)
+        fi
+        hash="${hash:0:6}"
+        local tail="${name: -33}"
+        # Start at a folder boundary rather than partway through a folder's name.
+        if [ "${name: -34:1}" != . ] && [[ "$tail" == *.* ]]; then
+            tail="${tail#*.}"
+        fi
+        tail=$(printf '%s' "$tail" | sed -E 's/^[^a-z0-9]+//')
+        name="$tail-$hash"
+    fi
+    printf '%s' "$name"
 }
 
 herdrs() {
     local name
     name=$(_herdr_session_name "$PWD")
     if [ -z "$name" ]; then
-        echo "herdrs: cannot name a session after '${PWD##*/}'." >&2
+        echo "herdrs: cannot name a session after '$PWD'." >&2
         return 2
     fi
     herdr --session "$name" "$@"
